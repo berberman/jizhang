@@ -30,16 +30,16 @@ deriving instance Show User
 deriving instance Ord User
 
 instance Table UserT where
-  data PrimaryKey UserT f = UserId (C f Username) deriving (Generic, Beamable)
+  data PrimaryKey UserT f = UserId {unUserId :: C f Username} deriving (Generic, Beamable)
   primaryKey = UserId . _username
 
 type UserKey = PrimaryKey UserT Identity
 
-deriving instance Eq (PrimaryKey UserT Identity)
+deriving instance Eq UserKey
 
-deriving instance Show (PrimaryKey UserT Identity)
+deriving instance Show UserKey
 
-deriving instance Ord (PrimaryKey UserT Identity)
+deriving instance Ord UserKey
 
 data GroupT f = Group
   { _groupId :: C f MyUUID,
@@ -49,7 +49,7 @@ data GroupT f = Group
   deriving (Generic, Beamable)
 
 instance Table GroupT where
-  data PrimaryKey GroupT f = GroupId (C f MyUUID) deriving (Generic, Beamable)
+  data PrimaryKey GroupT f = GroupId {unGroupId :: C f MyUUID} deriving (Generic, Beamable)
   primaryKey = GroupId . _groupId
 
 type Group = GroupT Identity
@@ -62,11 +62,11 @@ deriving instance Ord Group
 
 type GroupKey = PrimaryKey GroupT Identity
 
-deriving instance Eq (PrimaryKey GroupT Identity)
+deriving instance Eq GroupKey
 
-deriving instance Show (PrimaryKey GroupT Identity)
+deriving instance Show GroupKey
 
-deriving instance Ord (PrimaryKey GroupT Identity)
+deriving instance Ord GroupKey
 
 data GroupMemberT f = GroupMember
   { _gmUser :: PrimaryKey UserT f,
@@ -77,16 +77,16 @@ data GroupMemberT f = GroupMember
 type GroupMember = GroupMemberT Identity
 
 instance Table GroupMemberT where
-  data PrimaryKey GroupMemberT f = GroupMemberId (PrimaryKey UserT f) (PrimaryKey GroupT f) deriving (Generic, Beamable)
+  data PrimaryKey GroupMemberT f = GroupMemberId {gmUnUser :: PrimaryKey UserT f, gmUnGroup :: PrimaryKey GroupT f} deriving (Generic, Beamable)
   primaryKey = GroupMemberId <$> _gmUser <*> _gmGroup
 
 type GroupMemberKey = PrimaryKey GroupMemberT Identity
 
-deriving instance Eq (PrimaryKey GroupMemberT Identity)
+deriving instance Eq GroupMemberKey
 
-deriving instance Show (PrimaryKey GroupMemberT Identity)
+deriving instance Show GroupMemberKey
 
-deriving instance Ord (PrimaryKey GroupMemberT Identity)
+deriving instance Ord GroupMemberKey
 
 deriving instance Eq GroupMember
 
@@ -109,16 +109,16 @@ data RecordT f = Record
 type Record = RecordT Identity
 
 instance Table RecordT where
-  data PrimaryKey RecordT f = RecordId (C f MyUUID) deriving (Generic, Beamable)
+  data PrimaryKey RecordT f = RecordId {unRecordId :: C f MyUUID} deriving (Generic, Beamable)
   primaryKey = RecordId . _recordId
 
 type RecordKey = PrimaryKey RecordT Identity
 
-deriving instance Eq (PrimaryKey RecordT Identity)
+deriving instance Eq RecordKey
 
-deriving instance Show (PrimaryKey RecordT Identity)
+deriving instance Show RecordKey
 
-deriving instance Ord (PrimaryKey RecordT Identity)
+deriving instance Ord RecordKey
 
 deriving instance Eq (PrimaryKey UserT (Nullable Identity))
 
@@ -159,7 +159,7 @@ deriving instance Show RecordSplit
 deriving instance Ord RecordSplit
 
 instance Table RecordSplitT where
-  data PrimaryKey RecordSplitT f = RecordSplitId (PrimaryKey RecordT f) (PrimaryKey UserT f) deriving (Generic, Beamable)
+  data PrimaryKey RecordSplitT f = RecordSplitId {rsUnRecordId :: PrimaryKey RecordT f, rsUnUserId :: PrimaryKey UserT f} deriving (Generic, Beamable)
   primaryKey :: RecordSplitT column -> PrimaryKey RecordSplitT column
   primaryKey = RecordSplitId <$> _rsRecord <*> _rsUser
 
