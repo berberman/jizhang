@@ -24,22 +24,27 @@ executable jizhang
     DB
     MyUUID
     Schema
+    Zhang
 
   build-depends:
     , aeson
     , base
-    , beam-core       ^>=0.10.4
-    , beam-sqlite     ^>=0.5.4
+    , beam-core        ^>=0.10.4
+    , beam-sqlite      ^>=0.5.4
     , bytestring
     , containers
     , mtl
     , servant
     , servant-server
+    , servant-swagger
     , sqlite-simple
+    , swagger2
     , text
     , time
     , transformers
     , uuid
+    , wai
+    , warp
 
   hs-source-dirs:   app
   default-language: Haskell2010

@@ -1,11 +1,15 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module MyUUID where
 
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Maybe (fromJust)
+import Data.Swagger (ToParamSchema, ToSchema)
 import Data.Text (Text)
 import Data.UUID
 import Data.UUID.V4 (nextRandom)
@@ -13,7 +17,7 @@ import Database.Beam
 import Database.Beam.Backend
 
 newtype MyUUID = MyUUID {getMyUUID :: UUID}
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq, Ord, Generic, FromJSON, ToJSON, Typeable, ToSchema, ToParamSchema)
 
 instance (BeamBackend be, FromBackendRow be Text) => FromBackendRow be MyUUID where
   fromBackendRow = MyUUID . fromJust . fromText <$> fromBackendRow

@@ -43,8 +43,7 @@ deriving instance Ord UserKey
 
 data GroupT f = Group
   { _groupId :: C f MyUUID,
-    _groupName :: C f Text,
-    _description :: C f Text
+    _groupName :: C f Text
   }
   deriving (Generic, Beamable)
 
