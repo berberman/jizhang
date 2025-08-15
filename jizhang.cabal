@@ -29,10 +29,12 @@ executable jizhang
   build-depends:
     , aeson
     , base
-    , beam-core        ^>=0.10.4
-    , beam-sqlite      ^>=0.5.4
+    , beam-core          ^>=0.10.4
+    , beam-sqlite        ^>=0.5.4
     , bytestring
     , containers
+    , log-base           ^>=0.12.1
+    , monad-control
     , mtl
     , servant
     , servant-server
@@ -42,6 +44,7 @@ executable jizhang
     , text
     , time
     , transformers
+    , transformers-base
     , uuid
     , wai
     , warp

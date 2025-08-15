@@ -91,10 +91,10 @@ getAllMembersInGroup groupId = runSelectReturningList $ select $ do
   guard_ (_gmGroup gm ==. val_ (GroupId groupId))
   pure gm
 
-getAllGroupWithMembers :: SqliteM [(Group, GroupMember)]
+getAllGroupWithMembers :: SqliteM [(Group, Maybe GroupMember)]
 getAllGroupWithMembers = runSelectReturningList $ select $ do
   group <- all_ (_groups jizhangDb)
-  members <- oneToMany_ (_groupMembers jizhangDb) _gmGroup group
+  members <- leftJoin_ (all_ $ _groupMembers jizhangDb) (\gm -> _gmGroup gm ==. primaryKey group)
   pure (group, members)
 
 insertRecord :: Text -> Double -> Username -> Maybe Username -> MyUUID -> UTCTime -> SqliteM Record
@@ -140,15 +140,23 @@ updateRecord recordId title amount paidBy transferTo recordTime = do
 getAllRecords :: SqliteM [Record]
 getAllRecords = runSelectReturningList $ select $ all_ (_records jizhangDb)
 
-insertRecordSplit :: MyUUID -> Username -> Int8 -> SqliteM RecordSplit
-insertRecordSplit recordId userId percentage = do
-  let split = RecordSplit (RecordId recordId) (UserId userId) percentage Nothing
+checkRecordExists :: MyUUID -> SqliteM Bool
+checkRecordExists recordId = do
+  records <- runSelectReturningList $ select $ do
+    record <- all_ (_records jizhangDb)
+    guard_ (_recordId record ==. val_ recordId)
+    pure record
+  pure $ not (null records)
+
+insertRecordSplit :: MyUUID -> Username -> Int8 -> Double -> SqliteM RecordSplit
+insertRecordSplit recordId userId percentage amount = do
+  let split = RecordSplit (RecordId recordId) (UserId userId) percentage amount
   runInsert (insert (_recordSplits jizhangDb) $ insertValues [split]) >> pure split
 
 deleteRecordSplitsForRecord :: MyUUID -> SqliteM ()
 deleteRecordSplitsForRecord recordId = runDelete $ delete (_recordSplits jizhangDb) (\rs -> _rsRecord rs ==. val_ (RecordId recordId))
 
-updateRecordSplit :: MyUUID -> Username -> Maybe Int8 -> Maybe (Maybe Double) -> SqliteM ()
+updateRecordSplit :: MyUUID -> Username -> Maybe Int8 -> Maybe Double -> SqliteM ()
 updateRecordSplit recordId userId percentage splitAmount = do
   runUpdate $
     update
@@ -160,17 +168,29 @@ updateRecordSplit recordId userId percentage splitAmount = do
       )
       (\rs -> _rsRecord rs ==. val_ (RecordId recordId) &&. _rsUser rs ==. val_ (UserId userId))
 
+getRecordWithSplits :: MyUUID -> SqliteM (Maybe (Record, [RecordSplit]))
+getRecordWithSplits recordId = do
+  record <- runSelectReturningOne $ select $ do
+    r <- all_ (_records jizhangDb)
+    guard_ (_recordId r ==. val_ recordId)
+    pure r
+  case record of
+    Just rec -> do
+      splits <- getRecordSplitsForRecord recordId
+      pure $ Just (rec, splits)
+    Nothing -> pure Nothing
+
 getRecordSplitsForRecord :: MyUUID -> SqliteM [RecordSplit]
 getRecordSplitsForRecord recordId = runSelectReturningList $ select $ do
   rs <- all_ (_recordSplits jizhangDb)
   guard_ (_rsRecord rs ==. val_ (RecordId recordId))
   pure rs
 
-getRecordsWithSplitsForGroup :: MyUUID -> SqliteM [(Record, RecordSplit)]
+getRecordsWithSplitsForGroup :: MyUUID -> SqliteM [(Record, Maybe RecordSplit)]
 getRecordsWithSplitsForGroup groupId = runSelectReturningList $ select $ do
   record <- all_ (_records jizhangDb)
   guard_ (_recordGroup record ==. val_ (GroupId groupId))
-  splits <- oneToMany_ (_recordSplits jizhangDb) _rsRecord record
+  splits <- leftJoin_ (all_ (_recordSplits jizhangDb)) (\rs -> _rsRecord rs ==. primaryKey record)
   pure (record, splits)
 
 getGroupsForUser :: Username -> SqliteM [Group]

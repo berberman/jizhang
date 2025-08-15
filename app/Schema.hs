@@ -9,6 +9,7 @@
 module Schema where
 
 import Data.Int (Int8)
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Time.Clock (UTCTime)
 import Database.Beam
@@ -105,6 +106,9 @@ data RecordT f = Record
   }
   deriving (Generic, Beamable)
 
+isTransferRecord :: Record -> Bool
+isTransferRecord record = isJust $ unUserId (_transferTo record)
+
 type Record = RecordT Identity
 
 instance Table RecordT where
@@ -135,9 +139,8 @@ data RecordSplitT f = RecordSplit
   { _rsRecord :: PrimaryKey RecordT f,
     _rsUser :: PrimaryKey UserT f,
     _percentage :: C f Int8,
-    -- | Calculated from the percentage
-    -- May be null if the split amount is not yet calculated
-    _splitAmount :: C f (Maybe Double)
+    -- | Calculated from the percentage. Should be updated when the record is updated.
+    _splitAmount :: C f Double
   }
   deriving (Generic, Beamable)
 
