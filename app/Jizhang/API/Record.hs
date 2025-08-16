@@ -52,7 +52,7 @@ addExpenseRecord (GroupId gId) req@ExpenseRecordRequest {..} = do
   record <- runDB $ D.insertRecord title amount (coerce byUsername) Nothing gId at
   -- Add the splits with split amounts calculated
   ss <- forM splits $ \RecordSplitRequest {..} ->
-    runDB $ D.insertRecordSplit (S._recordId record) (coerce username) percentage (fromIntegral percentage * amount)
+    runDB $ D.insertRecordSplit (S._recordId record) (coerce username) percentage (fromIntegral percentage * amount / 100)
   pure $ recordToExpenseRecord record ss
 
 addTransferRecord :: GroupId -> TransferRecordRequest -> MyHandler Record
@@ -116,7 +116,7 @@ updateExpense (GroupId gId) (RecordId rId) req@ExpenseRecordRequest {..} = do
       runDB $ D.updateRecord rId (Just title) (Just amount) (Just $ coerce byUsername) Nothing (Just at)
       -- Add new splits with split amounts calculated
       forM_ splits $ \RecordSplitRequest {..} ->
-        runDB $ D.insertRecordSplit (coerce rid) (coerce username) percentage (fromIntegral percentage * amount)
+        runDB $ D.insertRecordSplit (coerce rid) (coerce username) percentage (fromIntegral percentage * amount / 100)
       -- Return the updated record
       getRecord (GroupId gId) (RecordId rId)
     _ -> throwError $ err400 {errBody = "Record is not an expense record"}
