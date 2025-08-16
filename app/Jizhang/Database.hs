@@ -1,14 +1,14 @@
 {-# LANGUAGE FlexibleContexts #-}
 
-module DB where
+module Jizhang.Database where
 
 import Data.Int (Int8)
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import Database.Beam
 import Database.Beam.Sqlite.Connection
-import MyUUID
-import Schema
+import Jizhang.Common.MyUUID
+import Jizhang.Database.Schema
 
 insertUser :: Username -> SqliteM User
 insertUser username = let user = User username in (runInsert (insert (_users jizhangDb) $ insertValues [user]) >> pure user)

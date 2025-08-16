@@ -5,7 +5,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module MyUUID where
+module Jizhang.Common.MyUUID where
 
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Maybe (fromJust)

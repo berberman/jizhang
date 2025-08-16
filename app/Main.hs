@@ -2,54 +2,22 @@
 
 module Main where
 
-import API
 import Control.Monad.IO.Class
-import DB
-import qualified Data.Text as T
-import Data.Time (getCurrentTime)
-import Database.Beam.Sqlite
 import Database.SQLite.Simple
+import Jizhang.API
 import Log.Backend.StandardOutput (withStdOutLogger)
-import Log.Monad
 import Network.Wai.Handler.Warp (run)
-import Schema
 
 main :: IO ()
-main = withStdOutLogger $ \logger -> runLogT "jizhang" logger maxBound $ do
+main = withStdOutLogger $ \logger -> do
   conn <- liftIO $ open "jizhang.db"
-  liftIO $ execute_ conn "PRAGMA foreign_keys = ON;"
-  liftIO $ createTables conn
-  liftIO $ run 8080 $ app conn logger
-  liftIO $ close conn
-
--- runBeamSqlite conn $ do
---   insertUser "admin"
---   insertUser "user1"
---   insertUser "user2"
---   group1 <- insertGroup "group1"
---   group2 <- insertGroup "group2"
---   getAllUsers >>= mapM_ (liftIO . putStrLn . T.unpack . _username)
---   addGroupMember "admin" $ _groupId group1
---   addGroupMember "user1" $ _groupId group1
---   addGroupMember "user1" $ _groupId group2
---   addGroupMember "user2" $ _groupId group2
---   deleteUser "user2"
---   getAllGroups >>= mapM_ (liftIO . print)
---   getAllGroupWithMembers >>= mapM_ (liftIO . print)
---   record1 <- insertRecord "Expense 1" 100.0 "admin" Nothing (_groupId group1) =<< liftIO getCurrentTime
---   insertRecordSplit (_recordId record1) "admin" 50
---   insertRecordSplit (_recordId record1) "user1" 50
---   record2 <- insertRecord "Expense 2" 200.0 "user1" Nothing (_groupId group1) =<< liftIO getCurrentTime
---   insertRecordSplit (_recordId record2) "admin" 100
---   insertRecordSplit (_recordId record2) "user1" 0
---   getAllRecordsInGroup (_groupId group1) >>= mapM_ (liftIO . print)
---   getRecordsWithSplitsForGroup (_groupId group1) >>= mapM_ (liftIO . print)
---   getRecordSplitsForRecord (_recordId record1) >>= mapM_ (liftIO . print)
---   getGroupsForUser "user1" >>= mapM_ (liftIO . print)
+  execute_ conn "PRAGMA foreign_keys = ON;"
+  createTables conn
+  run 8080 $ app conn logger
+  close conn
 
 createTables :: Connection -> IO ()
 createTables conn = do
-  execute_ conn "PRAGMA foreign_keys = ON;"
   execute_ conn "CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY);"
   execute_ conn "CREATE TABLE IF NOT EXISTS groups (id TEXT PRIMARY KEY, name TEXT NOT NULL);"
   execute_ conn "CREATE TABLE IF NOT EXISTS group_members (user__username TEXT, group__id TEXT, PRIMARY KEY (user__username, group__id), FOREIGN KEY (user__username) REFERENCES users (username) ON DELETE CASCADE, FOREIGN KEY (group__id) REFERENCES groups (id) ON DELETE CASCADE);"

@@ -20,11 +20,16 @@ executable jizhang
   import:           warnings
   main-is:          Main.hs
   other-modules:
-    API
-    DB
-    MyUUID
-    Schema
-    Zhang
+    Jizhang.API
+    Jizhang.API.Group
+    Jizhang.API.Record
+    Jizhang.API.Report
+    Jizhang.API.Types
+    Jizhang.API.User
+    Jizhang.API.Utils
+    Jizhang.Common.MyUUID
+    Jizhang.Database
+    Jizhang.Database.Schema
 
   build-depends:
     , aeson

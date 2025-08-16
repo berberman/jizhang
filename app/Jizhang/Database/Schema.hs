@@ -6,14 +6,14 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Schema where
+module Jizhang.Database.Schema where
 
 import Data.Int (Int8)
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Time.Clock (UTCTime)
 import Database.Beam
-import MyUUID
+import Jizhang.Common.MyUUID
 
 type Username = Text
 
