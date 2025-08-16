@@ -1,9 +1,11 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Jizhang.API where
 
 import Control.Monad.Reader (ReaderT (..))
+import Data.Swagger (Swagger)
 import Database.SQLite.Simple (Connection)
 import Jizhang.API.Group
 import Jizhang.API.Record
@@ -13,6 +15,7 @@ import Jizhang.API.User
 import Log (logExceptions, runLogT)
 import Log.Logger (Logger)
 import Servant
+import Servant.Swagger
 
 jizhangServer :: MyServer JizhangAPI
 jizhangServer =
@@ -21,16 +24,26 @@ jizhangServer =
     :<|> recordServer
     :<|> reportServer
 
+type SwaggerAPI = "swagger.json" :> Get '[JSON] Swagger
+
 type JizhangAPI = UserAPI :<|> GroupAPI :<|> RecordAPI :<|> ReportAPI
 
-jizhangAPI :: Proxy JizhangAPI
-jizhangAPI = Proxy
+type API = JizhangAPI :<|> SwaggerAPI
+
+swaggerServer :: MyServer SwaggerAPI
+swaggerServer = pure $ toSwagger (Proxy :: Proxy JizhangAPI)
+
+api :: Proxy API
+api = Proxy
+
+server :: MyServer API
+server = jizhangServer :<|> swaggerServer
 
 app :: Connection -> Logger -> Application
 app conn logger =
-  serve jizhangAPI $
+  serve api $
     hoistServer
-      jizhangAPI
+      api
       ( runLogT
           "jizhang"
           logger
@@ -39,4 +52,4 @@ app conn logger =
           . flip runReaderT conn
           . runMyHandler
       )
-      jizhangServer
+      server
