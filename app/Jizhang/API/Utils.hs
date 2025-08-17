@@ -44,15 +44,15 @@ validateExpenseRecordRequest :: ExpenseRecordRequest -> MyHandler ()
 validateExpenseRecordRequest ExpenseRecordRequest {..} = do
   when (T.null title) $ throwError $ err400 {errBody = "Title cannot be empty"}
   when (amount <= 0) $ throwError $ err400 {errBody = "Amount must be greater than zero"}
-  when (sum ([percentage | RecordSplitRequest {..} <- splits]) /= 100) $
+  when (sum ([share | RecordSplitRequest {..} <- splits]) /= 100) $
     throwError $
-      err400 {errBody = "Total percentage of splits must equal 100"}
+      err400 {errBody = "Total share of splits must equal 100"}
   ensureUserExists (coerce byUsername)
   forM_ splits $ \RecordSplitRequest {..} -> do
     ensureUserExists (coerce username)
-    when (percentage < 0 || percentage > 100) $
+    when (share < 0) $
       throwError $
-        err400 {errBody = "Percentage must be between 0 and 100"}
+        err400 {errBody = "Share must be non-negative"}
 
 validateTransferRecordRequest :: TransferRecordRequest -> MyHandler ()
 validateTransferRecordRequest TransferRecordRequest {..} = do
@@ -71,7 +71,7 @@ recordToExpenseRecord record ssplits =
       byUsername = coerce . S.unUserId $ S._paidBy record
       at = S._createdAt record
       groupId = coerce . S.unGroupId $ S._recordGroup record
-      splits = [RecordSplit (coerce $ S.unUserId _rsUser) _percentage _splitAmount | S.RecordSplit {..} <- ssplits]
+      splits = [RecordSplit (coerce $ S.unUserId _rsUser) _share _splitAmount | S.RecordSplit {..} <- ssplits]
    in ExpenseRecord {..}
 
 recordToTransferRecord :: S.Record -> Record

@@ -138,8 +138,8 @@ deriving instance Ord Record
 data RecordSplitT f = RecordSplit
   { _rsRecord :: PrimaryKey RecordT f,
     _rsUser :: PrimaryKey UserT f,
-    _percentage :: C f Int8,
-    -- | Calculated from the percentage. Should be updated when the record is updated.
+    _share :: C f Int8,
+    -- | Calculated from the share. Should be updated when the record is updated.
     _splitAmount :: C f Double
   }
   deriving (Generic, Beamable)

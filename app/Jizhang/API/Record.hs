@@ -51,8 +51,10 @@ addExpenseRecord (GroupId gId) req@ExpenseRecordRequest {..} = do
   -- Add the record
   record <- runDB $ D.insertRecord title amount (coerce byUsername) Nothing gId at
   -- Add the splits with split amounts calculated
+  let totalShare = sum [share | RecordSplitRequest {..} <- splits]
+      amountPerShare = amount / fromIntegral totalShare
   ss <- forM splits $ \RecordSplitRequest {..} ->
-    runDB $ D.insertRecordSplit (S._recordId record) (coerce username) percentage (fromIntegral percentage * amount / 100)
+    runDB $ D.insertRecordSplit (S._recordId record) (coerce username) share (amountPerShare * fromIntegral share)
   pure $ recordToExpenseRecord record ss
 
 addTransferRecord :: GroupId -> TransferRecordRequest -> MyHandler Record
@@ -115,8 +117,10 @@ updateExpense (GroupId gId) (RecordId rId) req@ExpenseRecordRequest {..} = do
       -- Update the record
       runDB $ D.updateRecord rId (Just title) (Just amount) (Just $ coerce byUsername) Nothing (Just at)
       -- Add new splits with split amounts calculated
+      let totalShare = sum [share | RecordSplitRequest {..} <- splits]
+          amountPerShare = amount / fromIntegral totalShare
       forM_ splits $ \RecordSplitRequest {..} ->
-        runDB $ D.insertRecordSplit (coerce rid) (coerce username) percentage (fromIntegral percentage * amount / 100)
+        runDB $ D.insertRecordSplit (coerce rid) (coerce username) share (amountPerShare * fromIntegral share)
       -- Return the updated record
       getRecord (GroupId gId) (RecordId rId)
     _ -> throwError $ err400 {errBody = "Record is not an expense record"}

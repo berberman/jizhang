@@ -149,21 +149,21 @@ checkRecordExists recordId = do
   pure $ not (null records)
 
 insertRecordSplit :: MyUUID -> Username -> Int8 -> Double -> SqliteM RecordSplit
-insertRecordSplit recordId userId percentage amount = do
-  let split = RecordSplit (RecordId recordId) (UserId userId) percentage amount
+insertRecordSplit recordId userId share amount = do
+  let split = RecordSplit (RecordId recordId) (UserId userId) share amount
   runInsert (insert (_recordSplits jizhangDb) $ insertValues [split]) >> pure split
 
 deleteRecordSplitsForRecord :: MyUUID -> SqliteM ()
 deleteRecordSplitsForRecord recordId = runDelete $ delete (_recordSplits jizhangDb) (\rs -> _rsRecord rs ==. val_ (RecordId recordId))
 
 updateRecordSplit :: MyUUID -> Username -> Maybe Int8 -> Maybe Double -> SqliteM ()
-updateRecordSplit recordId userId percentage splitAmount = do
+updateRecordSplit recordId userId share splitAmount = do
   runUpdate $
     update
       (_recordSplits jizhangDb)
       ( \rs ->
           mconcat $
-            [_percentage rs <-. val_ x | Just x <- [percentage]]
+            [_share rs <-. val_ x | Just x <- [share]]
               <> [_splitAmount rs <-. val_ x | Just x <- [splitAmount]]
       )
       (\rs -> _rsRecord rs ==. val_ (RecordId recordId) &&. _rsUser rs ==. val_ (UserId userId))

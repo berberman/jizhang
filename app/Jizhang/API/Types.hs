@@ -54,7 +54,7 @@ data Group = Group
 
 data RecordSplit = RecordSplit
   { username :: User,
-    percentage :: Int8,
+    share :: Int8,
     splitAmount :: Double
   }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
@@ -62,7 +62,7 @@ data RecordSplit = RecordSplit
 
 data RecordSplitRequest = RecordSplitRequest
   { username :: User,
-    percentage :: Int8
+    share :: Int8
   }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
