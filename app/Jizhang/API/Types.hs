@@ -145,7 +145,7 @@ type MyServer k = ServerT k MyHandler
 newtype MyHandler a = MyHandler
   { runMyHandler :: ReaderT Connection (LogT Handler) a
   }
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadReader Connection, MonadError ServerError, MonadLog, MonadBase IO)
+  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadReader Connection, MonadError ServerError, MonadLog, MonadBase IO, MonadFail)
 
 instance MonadBaseControl IO MyHandler where
   type StM MyHandler a = Either ServerError a

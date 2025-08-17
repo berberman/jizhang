@@ -16,6 +16,7 @@ import Log (LogT, LoggerEnv (leLogger), MonadLog (getLoggerEnv), logExceptions, 
 import Network.Wai.Log (mkLogMiddleware)
 import Servant
 import Servant.Swagger
+import Jizhang.API.Import
 
 jizhangServer :: MyServer JizhangAPI
 jizhangServer =
@@ -23,10 +24,11 @@ jizhangServer =
     :<|> groupServer
     :<|> recordServer
     :<|> reportServer
+    :<|> importServer
 
 type SwaggerAPI = "swagger.json" :> Get '[JSON] Swagger
 
-type JizhangAPI = UserAPI :<|> GroupAPI :<|> RecordAPI :<|> ReportAPI
+type JizhangAPI = UserAPI :<|> GroupAPI :<|> RecordAPI :<|> ReportAPI :<|> ImportAPI
 
 type API = JizhangAPI :<|> SwaggerAPI
 

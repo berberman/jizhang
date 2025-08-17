@@ -22,6 +22,7 @@ executable jizhang
   other-modules:
     Jizhang.API
     Jizhang.API.Group
+    Jizhang.API.Import
     Jizhang.API.Record
     Jizhang.API.Report
     Jizhang.API.Types
@@ -37,7 +38,9 @@ executable jizhang
     , beam-core          ^>=0.10.4
     , beam-sqlite        ^>=0.5.4
     , bytestring
+    , cassava
     , containers
+    , http-media
     , log-base           ^>=0.12.1
     , monad-control
     , mtl

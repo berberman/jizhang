@@ -44,9 +44,6 @@ validateExpenseRecordRequest :: ExpenseRecordRequest -> MyHandler ()
 validateExpenseRecordRequest ExpenseRecordRequest {..} = do
   when (T.null title) $ throwError $ err400 {errBody = "Title cannot be empty"}
   when (amount <= 0) $ throwError $ err400 {errBody = "Amount must be greater than zero"}
-  when (sum ([share | RecordSplitRequest {..} <- splits]) /= 100) $
-    throwError $
-      err400 {errBody = "Total share of splits must equal 100"}
   ensureUserExists (coerce byUsername)
   forM_ splits $ \RecordSplitRequest {..} -> do
     ensureUserExists (coerce username)

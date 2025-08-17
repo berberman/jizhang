@@ -113,12 +113,6 @@ insertRecord title amount paidBy transferTo groupId recordTime = do
   runInsert $ insert (_records jizhangDb) $ insertValues [record]
   pure record
 
-getAllRecordsInGroup :: MyUUID -> SqliteM [Record]
-getAllRecordsInGroup groupId = runSelectReturningList $ select $ do
-  record <- all_ (_records jizhangDb)
-  guard_ (_recordGroup record ==. val_ (GroupId groupId))
-  pure record
-
 deleteRecord :: MyUUID -> SqliteM ()
 deleteRecord recordId = runDelete $ delete (_records jizhangDb) (\record -> _recordId record ==. val_ recordId)
 
@@ -136,9 +130,6 @@ updateRecord recordId title amount paidBy transferTo recordDate = do
               <> [_date record <-. val_ x | Just x <- [recordDate]]
       )
       (\record -> _recordId record ==. val_ recordId)
-
-getAllRecords :: SqliteM [Record]
-getAllRecords = runSelectReturningList $ select $ all_ (_records jizhangDb)
 
 checkRecordExists :: MyUUID -> SqliteM Bool
 checkRecordExists recordId = do
