@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeOperators #-}
@@ -7,6 +8,7 @@ module Jizhang.API.Record where
 
 import Control.Monad (forM, forM_)
 import Data.Coerce (coerce)
+import Data.List (sortOn)
 import qualified Data.Map.Strict as M
 import Data.Maybe (fromJust, maybeToList)
 import Jizhang.API.Types
@@ -83,7 +85,13 @@ getRecordsInGroup (GroupId gId) = do
   ensureGroupExists gId
   rs <- runDB $ D.getRecordsWithSplitsForGroup gId
   let mp = M.fromListWith (++) [(r, maybeToList s) | (r, s) <- rs]
-  pure [if S.isTransferRecord r then recordToTransferRecord r else recordToExpenseRecord r ss | (r, ss) <- M.toList mp]
+  pure
+    $ sortOn
+      ( \case
+          ExpenseRecord {date = d} -> d
+          TransferRecord {date = d} -> d
+      )
+    $ [if S.isTransferRecord r then recordToTransferRecord r else recordToExpenseRecord r ss | (r, ss) <- M.toList mp]
 
 deleteRecord :: GroupId -> RecordId -> MyHandler NoContent
 deleteRecord (GroupId gId) (RecordId rId) = do
