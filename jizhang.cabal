@@ -52,6 +52,7 @@ executable jizhang
     , transformers-base
     , uuid
     , wai
+    , wai-log
     , warp
 
   hs-source-dirs:   app

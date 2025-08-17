@@ -12,8 +12,8 @@ import Jizhang.API.Record
 import Jizhang.API.Report
 import Jizhang.API.Types
 import Jizhang.API.User
-import Log (logExceptions, runLogT)
-import Log.Logger (Logger)
+import Log (LogT, LoggerEnv (leLogger), MonadLog (getLoggerEnv), logExceptions, runLogT)
+import Network.Wai.Log (mkLogMiddleware)
 import Servant
 import Servant.Swagger
 
@@ -39,17 +39,21 @@ api = Proxy
 server :: MyServer API
 server = jizhangServer :<|> swaggerServer
 
-app :: Connection -> Logger -> Application
-app conn logger =
-  serve api $
-    hoistServer
-      api
-      ( runLogT
-          "jizhang"
-          logger
-          maxBound
-          . logExceptions
-          . flip runReaderT conn
-          . runMyHandler
-      )
-      server
+app :: Connection -> LogT IO Application
+app conn = do
+  env <- getLoggerEnv
+  let s =
+        serve api $
+          hoistServer
+            api
+            ( runLogT
+                "jizhang"
+                (leLogger env)
+                maxBound
+                . logExceptions
+                . flip runReaderT conn
+                . runMyHandler
+            )
+            server
+  middleware <- mkLogMiddleware
+  pure $ middleware $ const s

@@ -5,6 +5,7 @@ module Main where
 import Control.Monad.IO.Class
 import Database.SQLite.Simple
 import Jizhang.API
+import Log
 import Log.Backend.StandardOutput (withStdOutLogger)
 import Network.Wai.Handler.Warp (run)
 
@@ -13,7 +14,8 @@ main = withStdOutLogger $ \logger -> do
   conn <- liftIO $ open "jizhang.db"
   execute_ conn "PRAGMA foreign_keys = ON;"
   createTables conn
-  run 8080 $ app conn logger
+  app' <- runLogT "jizhang" logger LogInfo $ app conn
+  run 8080 app'
   close conn
 
 createTables :: Connection -> IO ()
