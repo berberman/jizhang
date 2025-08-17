@@ -19,7 +19,7 @@ import Data.Int (Int8)
 import Data.Swagger (ToParamSchema, ToSchema)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time (UTCTime, getCurrentTime)
+import Data.Time (Day, getCurrentTime)
 import Database.Beam.Sqlite (SqliteM, runBeamSqliteDebug)
 import Database.SQLite.Simple (Connection)
 import GHC.Generics (Generic)
@@ -45,97 +45,97 @@ newtype RecordId = RecordId MyUUID
   deriving newtype (ToJSON, FromJSON, ToSchema, ToParamSchema, FromHttpApiData)
 
 data Group = Group
-  { groupId :: GroupId,
-    groupName :: Text,
-    members :: [User]
+  { groupId :: !GroupId,
+    groupName :: !Text,
+    members :: ![User]
   }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 data RecordSplit = RecordSplit
-  { username :: User,
-    share :: Int8,
-    splitAmount :: Double
+  { username :: !User,
+    share :: !Int8,
+    splitAmount :: !Double
   }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 data RecordSplitRequest = RecordSplitRequest
-  { username :: User,
-    share :: Int8
+  { username :: !User,
+    share :: !Int8
   }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 data ExpenseRecordRequest = ExpenseRecordRequest
-  { title :: Text,
-    amount :: Double,
-    byUsername :: User,
-    at :: UTCTime,
-    splits :: [RecordSplitRequest]
+  { title :: !Text,
+    amount :: !Double,
+    byUsername :: !User,
+    date :: !Day,
+    splits :: ![RecordSplitRequest]
   }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 data TransferRecordRequest = TransferRecordRequest
-  { amount :: Double,
-    byUsername :: User,
-    toUsername :: User,
-    at :: UTCTime
+  { amount :: !Double,
+    byUsername :: !User,
+    toUsername :: !User,
+    date :: !Day
   }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 data Record
   = ExpenseRecord
-      { recordId :: RecordId,
-        title :: Text,
-        amount :: Double,
-        byUsername :: User,
-        at :: UTCTime,
-        groupId :: GroupId,
-        splits :: [RecordSplit]
+      { recordId :: !RecordId,
+        title :: !Text,
+        amount :: !Double,
+        byUsername :: !User,
+        date :: !Day,
+        groupId :: !GroupId,
+        splits :: ![RecordSplit]
       }
   | TransferRecord
-      { recordId :: RecordId,
-        title :: Text,
-        amount :: Double,
-        byUsername :: User,
-        toUsername :: User,
-        at :: UTCTime,
-        groupId :: GroupId
+      { recordId :: !RecordId,
+        title :: !Text,
+        amount :: !Double,
+        byUsername :: !User,
+        toUsername :: !User,
+        date :: !Day,
+        groupId :: !GroupId
       }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 data BalanceBreakdown = BalanceBreakdown
-  { recordId :: RecordId,
-    title :: Text,
-    amount :: Double
+  { recordId :: !RecordId,
+    title :: !Text,
+    amount :: !Double
   }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 data Balance = Balance
-  { username :: User,
-    totalAmount :: Double,
-    breakdown :: [BalanceBreakdown]
+  { username :: !User,
+    totalAmount :: !Double,
+    breakdown :: ![BalanceBreakdown]
   }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 data Settlement = Settlement
-  { fromUsername :: User,
-    toUsername :: User,
-    amount :: Double
+  { fromUsername :: !User,
+    toUsername :: !User,
+    amount :: !Double
   }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 data Report = Report
-  { groupId :: GroupId,
-    balances :: [Balance],
-    settlements :: [Settlement]
+  { groupId :: !GroupId,
+    balances :: ![Balance],
+    settlements :: ![Settlement]
   }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
   deriving anyclass (ToJSON, FromJSON, ToSchema)

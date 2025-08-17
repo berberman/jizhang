@@ -11,7 +11,7 @@ module Jizhang.Database.Schema where
 import Data.Int (Int8)
 import Data.Maybe (isJust)
 import Data.Text (Text)
-import Data.Time.Clock (UTCTime)
+import Data.Time (Day)
 import Database.Beam
 import Jizhang.Common.MyUUID
 
@@ -102,7 +102,7 @@ data RecordT f = Record
     _paidBy :: PrimaryKey UserT f,
     -- | Whether this record is a transfer to another user instead of a group expense
     _transferTo :: PrimaryKey UserT (Nullable f),
-    _createdAt :: C f UTCTime
+    _date :: C f Day
   }
   deriving (Generic, Beamable)
 

@@ -49,7 +49,7 @@ addExpenseRecord (GroupId gId) req@ExpenseRecordRequest {..} = do
   ensureGroupExists gId
   validateExpenseRecordRequest req
   -- Add the record
-  record <- runDB $ D.insertRecord title amount (coerce byUsername) Nothing gId at
+  record <- runDB $ D.insertRecord title amount (coerce byUsername) Nothing gId date
   -- Add the splits with split amounts calculated
   let totalShare = sum [share | RecordSplitRequest {..} <- splits]
       amountPerShare = amount / fromIntegral totalShare
@@ -62,7 +62,7 @@ addTransferRecord (GroupId gId) req@TransferRecordRequest {..} = do
   logInfo_ $ "Adding transfer record to group " <> uuidToText gId
   ensureGroupExists gId
   validateTransferRecordRequest req
-  record <- runDB $ D.insertRecord "Transfer" amount (coerce byUsername) (Just (coerce toUsername)) gId at
+  record <- runDB $ D.insertRecord "Transfer" amount (coerce byUsername) (Just (coerce toUsername)) gId date
   pure $ recordToTransferRecord record
 
 getRecord :: GroupId -> RecordId -> MyHandler Record
@@ -101,7 +101,7 @@ updateTransfer (GroupId gId) (RecordId rId) req@TransferRecordRequest {..} = do
   case old of
     TransferRecord {} -> do
       validateTransferRecordRequest req
-      _ <- runDB $ D.updateRecord rId Nothing (Just amount) (Just $ coerce byUsername) (Just $ Just $ coerce toUsername) (Just at)
+      _ <- runDB $ D.updateRecord rId Nothing (Just amount) (Just $ coerce byUsername) (Just $ Just $ coerce toUsername) (Just date)
       getRecord (GroupId gId) (RecordId rId)
     _ -> throwError $ err400 {errBody = "Record is not a transfer record"}
 
@@ -115,7 +115,7 @@ updateExpense (GroupId gId) (RecordId rId) req@ExpenseRecordRequest {..} = do
       -- Delete existing splits
       runDB $ D.deleteRecordSplitsForRecord rId
       -- Update the record
-      runDB $ D.updateRecord rId (Just title) (Just amount) (Just $ coerce byUsername) Nothing (Just at)
+      runDB $ D.updateRecord rId (Just title) (Just amount) (Just $ coerce byUsername) Nothing (Just date)
       -- Add new splits with split amounts calculated
       let totalShare = sum [share | RecordSplitRequest {..} <- splits]
           amountPerShare = amount / fromIntegral totalShare

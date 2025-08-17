@@ -69,7 +69,7 @@ recordToExpenseRecord record ssplits =
       title = S._title record
       amount = S._amount record
       byUsername = coerce . S.unUserId $ S._paidBy record
-      at = S._createdAt record
+      date = S._date record
       groupId = coerce . S.unGroupId $ S._recordGroup record
       splits = [RecordSplit (coerce $ S.unUserId _rsUser) _share _splitAmount | S.RecordSplit {..} <- ssplits]
    in ExpenseRecord {..}
@@ -81,7 +81,7 @@ recordToTransferRecord record =
       amount = S._amount record
       byUsername = coerce . S.unUserId $ S._paidBy record
       toUsername = coerce . fromJust . S.unUserId $ S._transferTo record
-      at = S._createdAt record
+      date = S._date record
       groupId = coerce . S.unGroupId $ S._recordGroup record
    in TransferRecord {..}
 

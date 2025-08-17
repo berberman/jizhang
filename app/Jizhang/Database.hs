@@ -4,7 +4,7 @@ module Jizhang.Database where
 
 import Data.Int (Int8)
 import Data.Text (Text)
-import Data.Time (UTCTime)
+import Data.Time (Day)
 import Database.Beam
 import Database.Beam.Sqlite.Connection
 import Jizhang.Common.MyUUID
@@ -97,7 +97,7 @@ getAllGroupWithMembers = runSelectReturningList $ select $ do
   members <- leftJoin_ (all_ $ _groupMembers jizhangDb) (\gm -> _gmGroup gm ==. primaryKey group)
   pure (group, members)
 
-insertRecord :: Text -> Double -> Username -> Maybe Username -> MyUUID -> UTCTime -> SqliteM Record
+insertRecord :: Text -> Double -> Username -> Maybe Username -> MyUUID -> Day -> SqliteM Record
 insertRecord title amount paidBy transferTo groupId recordTime = do
   newUUID <- liftIO randomMyUUID
   let record =
@@ -108,7 +108,7 @@ insertRecord title amount paidBy transferTo groupId recordTime = do
             _amount = amount,
             _paidBy = UserId paidBy,
             _transferTo = maybe nothing_ (just_ . UserId) transferTo,
-            _createdAt = recordTime
+            _date = recordTime
           }
   runInsert $ insert (_records jizhangDb) $ insertValues [record]
   pure record
@@ -122,8 +122,8 @@ getAllRecordsInGroup groupId = runSelectReturningList $ select $ do
 deleteRecord :: MyUUID -> SqliteM ()
 deleteRecord recordId = runDelete $ delete (_records jizhangDb) (\record -> _recordId record ==. val_ recordId)
 
-updateRecord :: MyUUID -> Maybe Text -> Maybe Double -> Maybe Username -> Maybe (Maybe Username) -> Maybe UTCTime -> SqliteM ()
-updateRecord recordId title amount paidBy transferTo recordTime = do
+updateRecord :: MyUUID -> Maybe Text -> Maybe Double -> Maybe Username -> Maybe (Maybe Username) -> Maybe Day -> SqliteM ()
+updateRecord recordId title amount paidBy transferTo recordDate = do
   runUpdate $
     update
       (_records jizhangDb)
@@ -133,7 +133,7 @@ updateRecord recordId title amount paidBy transferTo recordTime = do
               <> [_amount record <-. val_ x | Just x <- [amount]]
               <> [_paidBy record <-. val_ (UserId x) | Just x <- [paidBy]]
               <> [_transferTo record <-. val_ (maybe nothing_ (just_ . UserId) x) | Just x <- [transferTo]]
-              <> [_createdAt record <-. val_ x | Just x <- [recordTime]]
+              <> [_date record <-. val_ x | Just x <- [recordDate]]
       )
       (\record -> _recordId record ==. val_ recordId)
 

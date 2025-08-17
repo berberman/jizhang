@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -40,23 +41,23 @@ reportServer = settle
 
 -- Records should be in the same group
 calculateBalance :: [User] -> [Record] -> Map User Balance
-calculateBalance users records = M.mapWithKey (\u (bal, brks) -> Balance u bal brks) mp
+calculateBalance !users !records = M.mapWithKey (\u (bal, brks) -> Balance u bal brks) mp
   where
     mp = foldr updateBalance (M.fromList [(u, (0.0, [])) | u <- users]) records
     updateBalance ExpenseRecord {..} = updateDebtor . updateCreditor
       where
-        updateCreditor = M.adjust (\(bal, brks) -> (bal + amount, BalanceBreakdown recordId title amount : brks)) byUsername
-        updateDebtor m = foldr (\RecordSplit {..} -> M.adjust (\(bal, brks) -> (bal - splitAmount, BalanceBreakdown recordId title (-splitAmount) : brks)) username) m splits
+        updateCreditor = M.adjust (\(!bal, !brks) -> (bal + amount, BalanceBreakdown recordId title amount : brks)) byUsername
+        updateDebtor m = foldr (\RecordSplit {..} -> M.adjust (\(!bal, !brks) -> (bal - splitAmount, BalanceBreakdown recordId title (-splitAmount) : brks)) username) m splits
     updateBalance TransferRecord {..} = updateDebtor . updateCreditor
       where
-        updateCreditor = M.adjust (\(bal, brks) -> (bal + amount, BalanceBreakdown recordId title amount : brks)) byUsername
-        updateDebtor = M.adjust (\(bal, brks) -> (bal - amount, BalanceBreakdown recordId title (-amount) : brks)) toUsername
+        updateCreditor = M.adjust (\(!bal, !brks) -> (bal + amount, BalanceBreakdown recordId title amount : brks)) byUsername
+        updateDebtor = M.adjust (\(!bal, !brks) -> (bal - amount, BalanceBreakdown recordId title (-amount) : brks)) toUsername
 
 calculateSettlement :: Map User Balance -> [Settlement]
 calculateSettlement balances = f (map (\(u, totalAmount -> b) -> (u, b)) $ M.toList balances) []
   where
     f [] mp = mp
-    f xs mp = if null creditors || null debtors then mp else f xs' mp'
+    f !xs !mp = if null creditors || null debtors then mp else f xs' mp'
       where
         creditors = filter ((> 0) . snd) xs
         debtors = filter ((< 0) . snd) xs
