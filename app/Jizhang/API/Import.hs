@@ -10,6 +10,7 @@ module Jizhang.API.Import where
 
 import Control.Monad (forM)
 import Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString.Lazy.Char8 as BS
 import Data.Coerce (coerce)
 import Data.Csv hiding (Record)
 import Data.Data (Typeable)
@@ -69,7 +70,7 @@ instance FromRecord SpreadSheetRecord where
     | otherwise = fail "Expected exactly 5 fields"
 
 parseRecords :: ByteString -> MyHandler [ExpenseRecordRequest]
-parseRecords raw = case decode HasHeader raw of
+parseRecords raw = case decode HasHeader (removeComments raw) of
   Left err ->
     throwError $
       err400
@@ -79,6 +80,8 @@ parseRecords raw = case decode HasHeader raw of
     parsedDate <- iso8601ParseM $ T.unpack date
     let splits' = [RecordSplitRequest username share | (username, share) <- toList $ fromListWith (+) [(s, 1) | s <- coerce split]]
     pure $ ExpenseRecordRequest title amount (coerce paidBy) parsedDate splits'
+  where
+    removeComments = BS.unlines . filter (not . BS.isPrefixOf "#") . BS.lines
 
 importServer :: MyServer ImportAPI
 importServer groupId (coerce -> csvData) =
