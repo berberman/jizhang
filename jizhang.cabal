@@ -13,41 +13,57 @@ copyright:       2025 Potato Hatsue
 build-type:      Simple
 extra-doc-files: CHANGELOG.md
 
-common warnings
-  ghc-options: -Wall
+common opts
+  ghc-options:      -Wall
+  default-language: Haskell2010
+  build-depends:    base
 
-executable jizhang
-  import:           warnings
-  main-is:          Main.hs
-  other-modules:
+library
+  import:          opts
+  hs-source-dirs:  app
+  exposed-modules:
     Jizhang.API
+    Jizhang.API.Auth
     Jizhang.API.Group
     Jizhang.API.Import
+    Jizhang.API.Receipt
     Jizhang.API.Record
     Jizhang.API.Report
     Jizhang.API.Types
+    Jizhang.API.Types.Auth
+    Jizhang.API.Types.Group
+    Jizhang.API.Types.Receipt
+    Jizhang.API.Types.Record
+    Jizhang.API.Types.Report
+    Jizhang.API.Types.User
     Jizhang.API.User
     Jizhang.API.Utils
-    Jizhang.Common.MyUUID
     Jizhang.Database
+    Jizhang.Database.Group
+    Jizhang.Database.Receipt
+    Jizhang.Database.Record
     Jizhang.Database.Schema
+    Jizhang.Database.User
 
   build-depends:
     , aeson
-    , base
-    , beam-core          ^>=0.10.4
-    , beam-sqlite        ^>=0.5.4
+    , bcrypt
+    , beam-core             ^>=0.10.4
+    , beam-postgres         ^>=0.5.4
     , bytestring
     , cassava
     , containers
     , http-media
-    , log-base           ^>=0.12.1
+    , log-base              ^>=0.12.1
     , monad-control
     , mtl
+    , postgresql-simple
     , servant
+    , servant-auth
+    , servant-auth-server
+    , servant-auth-swagger
     , servant-server
     , servant-swagger
-    , sqlite-simple
     , swagger2
     , text
     , time
@@ -58,5 +74,45 @@ executable jizhang
     , wai-log
     , warp
 
-  hs-source-dirs:   app
-  default-language: Haskell2010
+executable jizhang
+  import:         opts
+  main-is:        Main.hs
+  hs-source-dirs: exe
+  build-depends:
+    , bytestring
+    , jizhang
+    , log-base             ^>=0.12.1
+    , postgresql-simple
+    , servant-auth-server
+    , warp
+
+test-suite jizhang-tests
+  import:         opts
+  type:           exitcode-stdio-1.0
+  main-is:        Main.hs
+  other-modules:
+    APITest
+    ReportTest
+    Utils
+
+  hs-source-dirs: test
+  build-depends:
+    , bytestring
+    , containers
+    , http-client
+    , http-types
+    , jizhang
+    , log-base             ^>=0.12.1
+    , postgresql-simple
+    , servant-auth
+    , servant-auth-client
+    , servant-auth-server
+    , servant-client
+    , servant-client-core
+    , servant-server
+    , tasty
+    , tasty-hunit
+    , text
+    , time
+    , uuid
+    , warp

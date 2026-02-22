@@ -6,7 +6,11 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
 
-module Jizhang.API.Import where
+module Jizhang.API.Import
+  ( ImportAPI,
+    importServer,
+  )
+where
 
 import Control.Monad (forM)
 import Data.ByteString.Lazy (ByteString)
@@ -28,7 +32,12 @@ import Jizhang.API.Utils
 import Network.HTTP.Media ((//))
 import Servant
 
-type ImportAPI = "groups" :> Capture "groupId" GroupId :> "import" :> ReqBody '[CSV] CSVData :> Post '[JSON] [Record]
+type ImportAPI =
+  "groups"
+    :> Capture "groupId" GroupId
+    :> "import"
+    :> ReqBody '[CSV] CSVData
+    :> Post '[JSON] [Record]
 
 data CSV deriving (Typeable)
 
@@ -55,6 +64,8 @@ instance FromField SpreadSheetSplit where
     Left _ -> fail "Invalid UTF-8 encoding"
     Right txt -> return $ SpreadSheetSplit (T.splitOn "," txt)
 
+-- | A record parsed from the CSV
+-- TODO: add createdAt field and handle it in the API
 data SpreadSheetRecord = SpreadSheetRecord
   { title :: !Text,
     amount :: !Double,
@@ -78,12 +89,14 @@ parseRecords raw = case decode HasHeader (removeComments raw) of
         }
   Right (toList -> records) -> forM records $ \SpreadSheetRecord {..} -> do
     parsedDate <- iso8601ParseM $ T.unpack date
-    let splits' = [RecordSplitRequest username share | (username, share) <- toList $ fromListWith (+) [(s, 1) | s <- coerce split]]
-    pure $ ExpenseRecordRequest title amount (coerce paidBy) parsedDate splits'
+    let splits' = [RecordSplitRequest (Username s) share | (s, share) <- toList $ fromListWith (+) [(s, 1) | s <- coerce split]]
+    pure $ ExpenseRecordRequest title amount (Username $ coerce paidBy) parsedDate splits'
   where
     removeComments = BS.unlines . filter (not . BS.isPrefixOf "#") . BS.lines
 
-importServer :: MyServer ImportAPI
-importServer groupId (coerce -> csvData) =
+importServer :: AuthUser -> MyServer ImportAPI
+importServer authUser groupId (coerce -> csvData) = do
+  ensureGroupExists (coerce groupId)
+  ensureGroupMember (authUserId authUser) (coerce groupId)
   parseRecords csvData >>= \req ->
-    forM req $ addExpenseRecord groupId
+    forM req $ addExpenseRecord authUser groupId

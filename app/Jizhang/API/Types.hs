@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -6,155 +7,63 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Jizhang.API.Types where
+module Jizhang.API.Types
+  ( module Jizhang.API.Types.Auth,
+    module Jizhang.API.Types.Group,
+    module Jizhang.API.Types.Receipt,
+    module Jizhang.API.Types.Record,
+    module Jizhang.API.Types.Report,
+    module Jizhang.API.Types.User,
+    AppEnv (..),
+    MyHandler (..),
+    MyServer,
+    runDB,
+  )
+where
 
 import Control.Monad.Base (MonadBase)
 import Control.Monad.Except (MonadError)
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
-import Data.Aeson (FromJSON, ToJSON)
 import Data.Aeson.Types (emptyObject)
-import Data.Data (Typeable)
-import Data.Int (Int8)
-import Data.Swagger (ToParamSchema, ToSchema)
-import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time (Day, getCurrentTime)
-import Database.Beam.Sqlite (SqliteM, runBeamSqliteDebug)
-import Database.SQLite.Simple (Connection)
-import GHC.Generics (Generic)
-import Jizhang.Common.MyUUID (MyUUID)
+import Data.Time (getCurrentTime)
+import Database.Beam.Postgres (Pg, runBeamPostgresDebug)
+import Database.PostgreSQL.Simple (Connection)
+import Jizhang.API.Types.Auth
+import Jizhang.API.Types.Group
+import Jizhang.API.Types.Receipt
+import Jizhang.API.Types.Record
+import Jizhang.API.Types.Report
+import Jizhang.API.Types.User
 import Log.Class (MonadLog)
 import Log.Data (LogLevel (..))
 import Log.Monad (LogT, getLoggerIO)
 import Servant
+import Servant.Auth.Server (JWTSettings)
 
-newtype User = User Text
-  deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving newtype (ToJSON, FromJSON, ToSchema, ToParamSchema)
-
-instance FromHttpApiData User where
-  parseUrlPiece = Right . User
-
-newtype GroupId = GroupId MyUUID
-  deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving newtype (ToJSON, FromJSON, ToSchema, ToParamSchema, FromHttpApiData)
-
-newtype RecordId = RecordId MyUUID
-  deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving newtype (ToJSON, FromJSON, ToSchema, ToParamSchema, FromHttpApiData)
-
-data Group = Group
-  { groupId :: !GroupId,
-    groupName :: !Text,
-    members :: ![User]
+-- | Application environment available to all handlers
+data AppEnv = AppEnv
+  { appConn :: !Connection,
+    appJWTSettings :: !JWTSettings
   }
-  deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving anyclass (ToJSON, FromJSON, ToSchema)
-
-data RecordSplit = RecordSplit
-  { username :: !User,
-    share :: !Int8,
-    splitAmount :: !Double
-  }
-  deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving anyclass (ToJSON, FromJSON, ToSchema)
-
-data RecordSplitRequest = RecordSplitRequest
-  { username :: !User,
-    share :: !Int8
-  }
-  deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving anyclass (ToJSON, FromJSON, ToSchema)
-
-data ExpenseRecordRequest = ExpenseRecordRequest
-  { title :: !Text,
-    amount :: !Double,
-    byUsername :: !User,
-    date :: !Day,
-    splits :: ![RecordSplitRequest]
-  }
-  deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving anyclass (ToJSON, FromJSON, ToSchema)
-
-data TransferRecordRequest = TransferRecordRequest
-  { amount :: !Double,
-    byUsername :: !User,
-    toUsername :: !User,
-    date :: !Day
-  }
-  deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving anyclass (ToJSON, FromJSON, ToSchema)
-
-data Record
-  = ExpenseRecord
-      { recordId :: !RecordId,
-        title :: !Text,
-        amount :: !Double,
-        byUsername :: !User,
-        date :: !Day,
-        groupId :: !GroupId,
-        splits :: ![RecordSplit]
-      }
-  | TransferRecord
-      { recordId :: !RecordId,
-        title :: !Text,
-        amount :: !Double,
-        byUsername :: !User,
-        toUsername :: !User,
-        date :: !Day,
-        groupId :: !GroupId
-      }
-  deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving anyclass (ToJSON, FromJSON, ToSchema)
-
-data BalanceBreakdown = BalanceBreakdown
-  { recordId :: !RecordId,
-    title :: !Text,
-    amount :: !Double
-  }
-  deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving anyclass (ToJSON, FromJSON, ToSchema)
-
-data Balance = Balance
-  { username :: !User,
-    totalAmount :: !Double,
-    breakdown :: ![BalanceBreakdown]
-  }
-  deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving anyclass (ToJSON, FromJSON, ToSchema)
-
-data Settlement = Settlement
-  { fromUsername :: !User,
-    toUsername :: !User,
-    amount :: !Double
-  }
-  deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving anyclass (ToJSON, FromJSON, ToSchema)
-
-data Report = Report
-  { groupId :: !GroupId,
-    balances :: ![Balance],
-    settlements :: ![Settlement]
-  }
-  deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 type MyServer k = ServerT k MyHandler
 
 newtype MyHandler a = MyHandler
-  { runMyHandler :: ReaderT Connection (LogT Handler) a
+  { runMyHandler :: ReaderT AppEnv (LogT Handler) a
   }
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadReader Connection, MonadError ServerError, MonadLog, MonadBase IO, MonadFail)
+  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadReader AppEnv, MonadError ServerError, MonadLog, MonadBase IO, MonadFail)
 
 instance MonadBaseControl IO MyHandler where
   type StM MyHandler a = Either ServerError a
   liftBaseWith f = MyHandler $ liftBaseWith $ \runInBase -> f (runInBase . runMyHandler)
   restoreM = MyHandler . restoreM
 
-runDB :: SqliteM a -> MyHandler a
+-- | Run a database action in the MyHandler monad
+runDB :: Pg a -> MyHandler a
 runDB m = do
-  conn <- ask
+  conn <- asks appConn
   logger <- getLoggerIO
   t <- liftIO getCurrentTime
-  liftIO $ runBeamSqliteDebug (\x -> logger t LogTrace (T.pack x) emptyObject) conn m
+  liftIO $ runBeamPostgresDebug (\x -> logger t LogTrace (T.pack x) emptyObject) conn m

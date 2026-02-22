@@ -20,7 +20,7 @@
         with haskell.lib; {
           inherit jizhang;
           jizhang-dev =
-            addBuildTools jizhang [ cabal-install haskell-language-server ];
+            addBuildTools jizhang [ cabal-install haskell-language-server postgresql ];
         };
       defaultPackage.x86_64-linux = jizhang;
       devShell.x86_64-linux = jizhang-dev.envFunc { };

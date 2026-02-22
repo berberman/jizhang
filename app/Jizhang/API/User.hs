@@ -1,10 +1,11 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Jizhang.API.User where
 
+import Control.Monad (forM)
 import Data.Coerce (coerce)
 import Jizhang.API.Types
 import Jizhang.API.Utils
@@ -14,76 +15,48 @@ import Log.Class
 import Servant
 
 type UserAPI =
-  -- Get all users
+  -- Get the authenticated user
   "users"
-    :> Get '[JSON] [User]
-    -- Create a new user
+    :> "me"
+    :> Get '[JSON] User
+    -- Delete the authenticated user
     :<|> "users"
-      :> ReqBody '[JSON] User
-      :> Post '[JSON] User
-    -- Delete a user
+      :> "me"
+      :> Delete '[JSON] NoContent
+    -- Get groups for the authenticated user
     :<|> "users"
-      :> Capture "username" User
-      :> DeleteNoContent
-    -- Get a specific user
-    :<|> "users"
-      :> Capture "username" User
-      :> Get '[JSON] User
-    -- Get groups for a specific user
-    :<|> "users"
-      :> Capture "username" User
+      :> "me"
       :> "groups"
       :> Get '[JSON] [Group]
 
-userServer :: MyServer UserAPI
-userServer =
-  getUsers
-    :<|> createUser
-    :<|> deleteUser
-    :<|> getUser
-    :<|> getGroupsForUser
+userServer :: AuthUser -> MyServer UserAPI
+userServer authUser =
+  getMe authUser
+    :<|> deleteMe authUser
+    :<|> getMyGroups authUser
 
-getUsers :: MyHandler [User]
-getUsers = do
-  logInfo_ "Fetching all users"
-  users <- runDB D.getAllUsers
-  pure $ coerce <$> users
+getMe :: AuthUser -> MyHandler User
+getMe AuthUser {..} = do
+  logInfo_ $ "Fetching current user: " <> authUsername
+  sUser <- lookupUserById authUserId
+  pure $ schemaUserToApiUser sUser
 
-createUser :: User -> MyHandler User
-createUser (User u) = do
-  logInfo_ $ "Creating user: " <> u
-  validateUsername u
-  exists <- runDB $ D.checkUserExists u
-  _ <-
-    if exists
-      then throwError $ err409 {errBody = "User already exists"}
-      else runDB $ D.insertUser u
-  pure $ User u
-
-deleteUser :: User -> MyHandler NoContent
-deleteUser (User u) = do
-  logInfo_ $ "Deleting user: " <> u
-  ensureUserExists u
-  runDB $ D.deleteUser u
+deleteMe :: AuthUser -> MyHandler NoContent
+deleteMe AuthUser {..} = do
+  logInfo_ $ "Deleting current user: " <> authUsername
+  runDB $ D.deleteUser authUserId
   pure NoContent
 
-getUser :: User -> MyHandler User
-getUser (User u) = do
-  logInfo_ $ "Fetching user: " <> u
-  ensureUserExists u
-  pure $ User u
+getMyGroups :: AuthUser -> MyHandler [Group]
+getMyGroups AuthUser {..} = do
+  logInfo_ $ "Fetching groups for current user: " <> authUsername
+  groups <- runDB $ D.getGroupsForUser authUserId
+  forM groups $ \g -> do
+    let gid = S._groupId g
+    um <- getGroupUserMap gid
+    ms <- runDB $ D.getAllMembersInGroup gid
+    pure $ Group (coerce gid) (S._groupName g) (resolveUser um (S.unUserId $ S._groupOwner g)) (resolveGroupMembers um ms)
 
-getGroupsForUser :: User -> MyHandler [Group]
-getGroupsForUser (User u) = do
-  logInfo_ $ "Fetching groups for user: " <> u
-  ensureUserExists u
-  groups <- runDB $ D.getGroupsForUser u
-  gms <-
-    mapM
-      ( \g ->
-          let gid = S._groupId g
-              gname = S._groupName g
-           in (gid,gname,) <$> runDB (D.getAllMembersInGroup gid)
-      )
-      groups
-  pure [Group (coerce gid) gname (coerce . S.unUserId . S._gmUser <$> uss) | (gid, gname, uss) <- gms]
+-- | Resolve group members to API Users using the user map
+resolveGroupMembers :: UserMap -> [S.GroupMember] -> [User]
+resolveGroupMembers um = map (\m -> resolveUser um (S.unUserId $ S._gmUser m))
