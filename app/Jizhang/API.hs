@@ -1,9 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Jizhang.API where
 
@@ -69,6 +67,8 @@ app appEnv = do
           . flip runReaderT appEnv
           . runMyHandler
   middleware <- mkLogMiddleware
-  pure $ middleware $ const $
-    serveWithContext api ctx $
-      hoistServerWithContext api (Proxy :: Proxy AppContext) nat server
+  pure $
+    middleware $
+      const $
+        serveWithContext api ctx $
+          hoistServerWithContext api (Proxy :: Proxy AppContext) nat server
