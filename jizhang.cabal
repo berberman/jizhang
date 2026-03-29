@@ -12,6 +12,8 @@ maintainer:      1793913507@qq.com
 copyright:       2025 Potato Hatsue
 build-type:      Simple
 extra-doc-files: CHANGELOG.md
+data-files:
+  sql/*.sql
 
 common opts
   ghc-options:      -Wall
@@ -20,7 +22,11 @@ common opts
 
 library
   import:          opts
-  hs-source-dirs:  app
+  hs-source-dirs:  src
+  autogen-modules:
+    Paths_jizhang
+  other-modules:
+    Paths_jizhang
   exposed-modules:
     Jizhang.API
     Jizhang.API.Auth
@@ -40,6 +46,7 @@ library
     Jizhang.API.Utils
     Jizhang.Database
     Jizhang.Database.Group
+    Jizhang.Database.Init
     Jizhang.Database.Receipt
     Jizhang.Database.Record
     Jizhang.Database.Schema
@@ -77,7 +84,7 @@ library
 executable jizhang
   import:         opts
   main-is:        Main.hs
-  hs-source-dirs: exe
+  hs-source-dirs: app
   build-depends:
     , bytestring
     , jizhang
