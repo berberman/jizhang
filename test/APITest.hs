@@ -18,7 +18,7 @@ import Jizhang.API.Admin (AdminAPI)
 import Jizhang.API.AdminAuth (AdminAuthAPI)
 import Jizhang.API.Auth (AuthAPI)
 import Jizhang.API.Group (GroupAPI)
-import Jizhang.API.Import (ImportAPI)
+import Jizhang.API.GroupImport (CSVData (..))
 import Jizhang.API.Receipt (ReceiptAPI)
 import Jizhang.API.Record (RecordAPI)
 import Jizhang.API.Report (ReportAPI)
@@ -27,7 +27,10 @@ import Jizhang.API.User (UserAPI)
 import Jizhang.Database.Init (createTables, dropTables)
 import Log (runLogT)
 import Log.Backend.StandardOutput (withStdOutLogger)
-import Network.HTTP.Client (defaultManagerSettings, newManager)
+import qualified Data.ByteString.Char8 as B8
+import qualified Data.ByteString.Lazy.Char8 as LBS8
+import qualified Network.HTTP.Client as HC
+import Network.HTTP.Client (Manager, defaultManagerSettings, httpLbs, newManager, parseRequest)
 import Network.HTTP.Types.Status
 import Network.Wai.Handler.Warp (testWithApplication)
 import Servant hiding (addHeader)
@@ -49,18 +52,20 @@ login_ :: LoginRequest -> ClientM LoginResponse
 (register_ :<|> login_) = client (Proxy :: Proxy AuthAPI)
 
 adminLogin_ :: AdminLoginRequest -> ClientM AdminLoginResponse
-adminLogin_ = client (Proxy :: Proxy AdminAuthAPI)
+adminLogin_ = loginClient
+  where
+    (loginClient :<|> _sessionLogin :<|> _sessionLogout :<|> _sessionMe) = client (Proxy :: Proxy AdminAuthAPI)
 
 -- Protected endpoints (require JWT auth token)
 type TestProtectedAPI =
-  Auth '[JWT] AuthUser :> (UserAPI :<|> GroupAPI :<|> RecordAPI :<|> ReportAPI :<|> ImportAPI :<|> ReceiptAPI)
+  Auth '[JWT] AuthUser :> (UserAPI :<|> GroupAPI :<|> RecordAPI :<|> ReportAPI :<|> ReceiptAPI)
 
 type TestProtectedAdminAPI =
   Auth '[JWT] AuthAdmin :> AdminAPI
 
 protectedClient_ ::
   Token ->
-  Client ClientM (UserAPI :<|> GroupAPI :<|> RecordAPI :<|> ReportAPI :<|> ImportAPI :<|> ReceiptAPI)
+  Client ClientM (UserAPI :<|> GroupAPI :<|> RecordAPI :<|> ReportAPI :<|> ReceiptAPI)
 protectedClient_ = client (Proxy :: Proxy TestProtectedAPI)
 
 protectedAdminClient_ :: Token -> Client ClientM AdminAPI
@@ -78,6 +83,7 @@ data TC = TC
     cAddMember :: GroupId -> Username -> ClientM Group,
     cDeleteMember :: GroupId -> Username -> ClientM NoContent,
     cTransferOwnership :: GroupId -> Username -> ClientM Group,
+    cImportGroupCsv :: GroupId -> CSVData -> ClientM [Record],
     cAddExpense :: GroupId -> ExpenseRecordRequest -> ClientM Record,
     cAddTransfer :: GroupId -> TransferRecordRequest -> ClientM Record,
     cGetRecord :: GroupId -> RecordId -> ClientM Record,
@@ -101,6 +107,7 @@ data AdminTC = AdminTC
     cAdminAdmins :: Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> ClientM (PaginatedResponse AdminSummary),
     cAdminCreateAdmin :: AdminCreateAdminRequest -> ClientM AdminSummary,
     cAdminGroups :: Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> ClientM (PaginatedResponse Group),
+    cAdminCreateGroup :: AdminCreateGroupRequest -> ClientM Group,
     cAdminBulkDeleteGroups :: BulkRequest GroupId -> ClientM NoContent,
     cAdminGroup :: GroupId -> ClientM Group,
     cAdminUpdateGroup :: GroupId -> Text -> ClientM Group,
@@ -110,12 +117,16 @@ data AdminTC = AdminTC
     cAdminDeleteMember :: GroupId -> Username -> ClientM NoContent,
     cAdminBulkDeleteMembers :: GroupId -> BulkRequest Username -> ClientM NoContent,
     cAdminTransferOwnership :: GroupId -> Username -> ClientM Group,
+    cAdminImportGroupCsv :: GroupId -> CSVData -> ClientM [Record],
+    cAdminAddExpense :: GroupId -> ExpenseRecordRequest -> ClientM Record,
+    cAdminAddTransfer :: GroupId -> TransferRecordRequest -> ClientM Record,
     cAdminGroupRecords :: GroupId -> ClientM [Record],
     cAdminBulkDeleteRecords :: GroupId -> BulkRequest RecordId -> ClientM NoContent,
     cAdminDeleteRecord :: GroupId -> RecordId -> ClientM NoContent,
     cAdminUpdateTransfer :: GroupId -> RecordId -> TransferRecordRequest -> ClientM Record,
     cAdminUpdateExpense :: GroupId -> RecordId -> ExpenseRecordRequest -> ClientM Record,
     cAdminGroupReport :: GroupId -> ClientM Report,
+    cAdminCreateReceipt :: GroupId -> AdminCreateReceiptRequest -> ClientM Receipt,
     cAdminGroupReceipts :: GroupId -> ClientM [Receipt],
     cAdminBulkDeleteReceipts :: GroupId -> BulkRequest ReceiptId -> ClientM NoContent,
     cAdminDeleteReceipt :: GroupId -> ReceiptId -> ClientM NoContent,
@@ -125,18 +136,18 @@ data AdminTC = AdminTC
 mkTC :: Text -> TC
 mkTC tok =
   let auth = Token (encodeUtf8 tok)
-      (uc :<|> gc :<|> rc :<|> rpt :<|> _imp :<|> rcp) = protectedClient_ auth
+      (uc :<|> gc :<|> rc :<|> rpt :<|> rcp) = protectedClient_ auth
       (a1 :<|> a2 :<|> a3) = uc
-      (b1 :<|> b2 :<|> b3 :<|> b4 :<|> b5 :<|> b6 :<|> b7) = gc
+      (b1 :<|> b2 :<|> b3 :<|> b4 :<|> b5 :<|> b6 :<|> b7 :<|> b8) = gc
       (c1 :<|> c2 :<|> c3 :<|> c4 :<|> c5 :<|> c6 :<|> c7) = rc
       (d1 :<|> d2 :<|> d3 :<|> d4 :<|> d5) = rcp
-   in TC a1 a2 a3 b1 b2 b3 b4 b5 b6 b7 c1 c2 c3 c4 c5 c6 c7 rpt d1 d2 d3 d4 d5
+   in TC a1 a2 a3 b1 b2 b3 b4 b5 b6 b7 b8 c1 c2 c3 c4 c5 c6 c7 rpt d1 d2 d3 d4 d5
 
 mkAdminTC :: Text -> AdminTC
 mkAdminTC tok =
   let auth = Token (encodeUtf8 tok)
-      (a1 :<|> a2 :<|> a3 :<|> a4 :<|> a5 :<|> a6 :<|> a7 :<|> a8 :<|> a9 :<|> a10 :<|> a11 :<|> a12 :<|> a13 :<|> a14 :<|> a15 :<|> a16 :<|> a17 :<|> a18 :<|> a19 :<|> a20 :<|> a21 :<|> a22 :<|> a23 :<|> a24 :<|> a25 :<|> a26) = protectedAdminClient_ auth
-   in AdminTC a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 a25 a26
+      (a1 :<|> a2 :<|> a3 :<|> a4 :<|> a5 :<|> a6 :<|> a7 :<|> a8 :<|> a9 :<|> a10 :<|> a11 :<|> a12 :<|> a13 :<|> a14 :<|> a15 :<|> a16 :<|> a17 :<|> a18 :<|> a19 :<|> a20 :<|> a21 :<|> a22 :<|> a23 :<|> a24 :<|> a25 :<|> a26 :<|> a27 :<|> a28 :<|> a29 :<|> a30 :<|> a31) = protectedAdminClient_ auth
+   in AdminTC a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 a25 a26 a27 a28 a29 a30 a31
 
 -- ============================================================
 -- Test infrastructure
@@ -146,7 +157,10 @@ withTestApp :: (ClientEnv -> IO a) -> IO a
 withTestApp = withTestAppWithBootstrap Nothing
 
 withTestAppWithBootstrap :: Maybe AdminBootstrap -> (ClientEnv -> IO a) -> IO a
-withTestAppWithBootstrap adminBootstrap action = withStdOutLogger $ \logger -> do
+withTestAppWithBootstrap adminBootstrap action = withTestAppServer adminBootstrap (\env _ _ -> action env)
+
+withTestAppServer :: Maybe AdminBootstrap -> (ClientEnv -> Int -> Manager -> IO a) -> IO a
+withTestAppServer adminBootstrap action = withStdOutLogger $ \logger -> do
   connStr <- fromMaybe "dbname=jizhang_test" . fmap pack <$> lookupEnv "TEST_DATABASE_URL"
   conn <- connectPostgreSQL connStr
   dropTables conn
@@ -158,7 +172,7 @@ withTestAppWithBootstrap adminBootstrap action = withStdOutLogger $ \logger -> d
   manager <- newManager defaultManagerSettings
   testWithApplication (pure waiApp) $ \port -> do
     let env = mkClientEnv manager (BaseUrl Http "localhost" port "")
-    result <- action env
+    result <- action env port manager
     dropTables conn
     close conn
     pure result
@@ -268,6 +282,7 @@ apiTests =
     "API Integration"
     [ authTests,
       adminTests,
+      adminUiTests,
       userTests,
       groupTests,
       recordTests,
@@ -406,7 +421,7 @@ adminTests =
             tcAlice = mkTC tokAlice
         g <- runClient env $ cCreateGroup tcAlice "Trip"
         _ <- runClient env $ cAddMember tcAlice (grpId g) (Username "bob")
-        expense <- runClient env $ cAddExpense tcAlice (grpId g) (ExpenseRecordRequest "Dinner" 100.0 (Username "alice") (read "2025-06-01") [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1])
+        expense <- runClient env $ cAdminAddExpense tcAdmin (grpId g) (ExpenseRecordRequest "Dinner" 100.0 (Username "alice") (read "2025-06-01") [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1])
         expense' <- runClient env $ cAdminUpdateExpense tcAdmin (grpId g) (extractRecordId expense) (ExpenseRecordRequest "Lunch" 40.0 (Username "bob") (read "2025-06-02") [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1])
         case expense' of
           ExpenseRecord {title = recordTitle, amount = recordAmount, paidBy = payer} -> do
@@ -414,7 +429,7 @@ adminTests =
             assertEqual "updated amount" 40.0 recordAmount
             assertEqual "updated payer" "bob" (userName payer)
           _ -> assertFailure "Expected updated expense record"
-        transfer <- runClient env $ cAddTransfer tcAlice (grpId g) (TransferRecordRequest 10.0 (Username "alice") (Username "bob") (read "2025-06-03"))
+        transfer <- runClient env $ cAdminAddTransfer tcAdmin (grpId g) (TransferRecordRequest 10.0 (Username "alice") (Username "bob") (read "2025-06-03"))
         transfer' <- runClient env $ cAdminUpdateTransfer tcAdmin (grpId g) (extractRecordId transfer) (TransferRecordRequest 25.0 (Username "bob") (Username "alice") (read "2025-06-04"))
         case transfer' of
           TransferRecord {amount = transferAmount, paidBy = payer, transferTo = receiver} -> do
@@ -432,7 +447,7 @@ adminTests =
             tcAlice = mkTC tokAlice
         g <- runClient env $ cCreateGroup tcAlice "Trip"
         _ <- runClient env $ cAddMember tcAlice (grpId g) (Username "bob")
-        receipt <- runClient env $ cCreateReceipt tcAlice (grpId g) (CreateReceiptRequest "Original" [ExpenseRecordRequest "Dinner" 100.0 (Username "alice") (read "2025-06-01") [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1]])
+        receipt <- runClient env $ cAdminCreateReceipt tcAdmin (grpId g) (AdminCreateReceiptRequest (Username "alice") "Original" [ExpenseRecordRequest "Dinner" 100.0 (Username "alice") (read "2025-06-01") [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1]])
         receipt' <- runClient env $ cAdminUpdateReceipt tcAdmin (grpId g) (receiptId receipt) (UpdateReceiptRequest "Updated" [ExpenseRecordRequest "Taxi" 60.0 (Username "bob") (read "2025-06-02") [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1]])
         let Receipt _ _ _ updatedNote updatedRecords _ = receipt'
         assertEqual "updated receipt note" "Updated" updatedNote
@@ -489,6 +504,43 @@ adminTests =
         _ <- runClient env $ cAdminBulkDeleteReceipts tcAdmin (grpId g1) (BulkRequest [receiptId receipt])
         receiptsAfterDelete <- runClient env $ cAdminGroupReceipts tcAdmin (grpId g1)
         assertEqual "receipts after bulk delete" 0 (length receiptsAfterDelete)
+    ]
+
+adminUiTests :: TestTree
+adminUiTests =
+  testGroup
+    "Admin UI"
+    [ testCase "serves admin UI shell" $ withTestAppServer (Just $ AdminBootstrap "admin" "adminpass123") $ \_ port manager -> do
+        req <- parseRequest $ "http://localhost:" <> show port <> "/admin-ui"
+        resp <- httpLbs req manager
+        assertEqual "status" status200 (HC.responseStatus resp)
+        assertBool "contains title" ("Jizhang Admin" `T.isInfixOf` T.pack (LBS8.unpack $ HC.responseBody resp)),
+      testCase "admin session login sets cookies" $ withTestAppServer (Just $ AdminBootstrap "admin" "adminpass123") $ \_ port manager -> do
+        req0 <- parseRequest $ "http://localhost:" <> show port <> "/admin/auth/session/login"
+        let req = req0 {HC.method = "POST", HC.requestBody = HC.RequestBodyLBS "{\"username\":\"admin\",\"password\":\"adminpass123\"}", HC.requestHeaders = [("Content-Type", "application/json")]}
+        resp <- httpLbs req manager
+        assertEqual "status" status200 (HC.responseStatus resp)
+        let cookieHeaders = filter ((== "Set-Cookie") . fst) (HC.responseHeaders resp)
+            cookieText = map (T.pack . show . snd) cookieHeaders
+        assertBool "session cookie present" (any (T.isInfixOf "JWT-Cookie=") cookieText)
+        assertBool "xsrf cookie present" (any (T.isInfixOf "XSRF-TOKEN=") cookieText),
+      testCase "admin session cookie can access admin APIs" $ withTestAppServer (Just $ AdminBootstrap "admin" "adminpass123") $ \_ port manager -> do
+        loginReq0 <- parseRequest $ "http://localhost:" <> show port <> "/admin/auth/session/login"
+        let loginReq = loginReq0 {HC.method = "POST", HC.requestBody = HC.RequestBodyLBS "{\"username\":\"admin\",\"password\":\"adminpass123\"}", HC.requestHeaders = [("Content-Type", "application/json")]}
+        loginResp <- httpLbs loginReq manager
+        let setCookies = map snd $ filter ((== "Set-Cookie") . fst) (HC.responseHeaders loginResp)
+            cookieText = map (T.pack . B8.unpack) setCookies
+            jwtCookie = head [T.takeWhile (/= ';') (T.drop (T.length "JWT-Cookie=") v) | v <- cookieText, "JWT-Cookie=" `T.isPrefixOf` v]
+            xsrfCookie = head [T.takeWhile (/= ';') (T.drop (T.length "XSRF-TOKEN=") v) | v <- cookieText, "XSRF-TOKEN=" `T.isPrefixOf` v]
+        meReq0 <- parseRequest $ "http://localhost:" <> show port <> "/admin/auth/session/me"
+        let cookieValue = "JWT-Cookie=" <> encodeUtf8 jwtCookie <> "; XSRF-TOKEN=" <> encodeUtf8 xsrfCookie
+            meReq = meReq0 {HC.requestHeaders = [("Cookie", cookieValue), ("X-XSRF-TOKEN", encodeUtf8 xsrfCookie)]}
+        meResp <- httpLbs meReq manager
+        assertEqual "session me status" status200 (HC.responseStatus meResp)
+        usersReq0 <- parseRequest $ "http://localhost:" <> show port <> "/admin/users?offset=0&limit=20&sort=username"
+        let usersReq = usersReq0 {HC.requestHeaders = [("Cookie", cookieValue), ("X-XSRF-TOKEN", encodeUtf8 xsrfCookie)]}
+        usersResp <- httpLbs usersReq manager
+        assertEqual "admin users status" status200 (HC.responseStatus usersResp)
     ]
 
 -- User tests

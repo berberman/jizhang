@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jizhang Admin</title>
+  <link rel="stylesheet" href="/admin-ui/styles.css" />
+</head>
+
+<body>
+  <div id="app">
+    <section id="login-view" class="screen">
+      <div class="card auth-card">
+        <h1>Jizhang Admin</h1>
+        <p class="muted">Sign in with an admin account.</p>
+        <form id="login-form" class="stack">
+          <label>
+            <span>Username</span>
+            <input name="username" type="text" autocomplete="username" required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit">Sign in</button>
+        </form>
+        <p id="login-error" class="error hidden"></p>
+      </div>
+    </section>
+
+    <section id="dashboard-view" class="screen hidden">
+      <aside class="sidebar">
+        <div>
+          <h2>Jizhang Admin</h2>
+          <p class="muted" id="admin-identity"></p>
+        </div>
+        <nav class="nav stack">
+          <button data-tab="overview" class="nav-btn active">Overview</button>
+          <button data-tab="users" class="nav-btn">Users</button>
+          <button data-tab="admins" class="nav-btn">Admins</button>
+          <button data-tab="groups" class="nav-btn">Groups</button>
+        </nav>
+        <button id="logout-btn" class="secondary">Log out</button>
+      </aside>
+
+      <main class="content">
+        <header class="page-header">
+          <div>
+            <h1 id="page-title">Overview</h1>
+            <p id="page-subtitle" class="muted">Internal admin console.</p>
+          </div>
+        </header>
+
+        <section id="global-error" class="banner error hidden"></section>
+
+        <section id="tab-overview" class="tab-panel">
+          <div class="stats-grid">
+            <article class="card stat-card">
+              <h3>Users</h3>
+              <p id="stat-users">–</p>
+            </article>
+            <article class="card stat-card">
+              <h3>Admins</h3>
+              <p id="stat-admins">–</p>
+            </article>
+            <article class="card stat-card">
+              <h3>Groups</h3>
+              <p id="stat-groups">–</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="tab-users" class="tab-panel hidden stack gap-lg">
+          <div class="grid-2">
+            <article class="card">
+              <h3>Create user</h3>
+              <form id="create-user-form" class="stack">
+                <input name="username" type="text" placeholder="username" required />
+                <input name="password" type="password" placeholder="password" required />
+                <button type="submit">Create user</button>
+              </form>
+            </article>
+
+            <article class="card">
+              <h3>Search users</h3>
+              <form id="users-filter-form" class="stack compact-row">
+                <input id="users-query" type="search" placeholder="Search users" />
+                <select id="users-sort">
+                  <option value="username">Username ↑</option>
+                  <option value="-username">Username ↓</option>
+                </select>
+                <button type="submit">Apply</button>
+              </form>
+            </article>
+          </div>
+          <article class="card">
+            <div class="table-header">
+              <h3>Users</h3>
+              <div class="pager" id="users-pager"></div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Username</th>
+                    <th>User ID</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="users-table"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
+        <section id="tab-admins" class="tab-panel hidden stack gap-lg">
+          <div class="grid-2">
+            <article class="card">
+              <h3>Create admin</h3>
+              <form id="create-admin-form" class="stack">
+                <input name="username" type="text" placeholder="admin username" required />
+                <input name="password" type="password" placeholder="password" required />
+                <button type="submit">Create admin</button>
+              </form>
+            </article>
+
+            <article class="card">
+              <h3>Search admins</h3>
+              <form id="admins-filter-form" class="stack compact-row">
+                <input id="admins-query" type="search" placeholder="Search admins" />
+                <select id="admins-sort">
+                  <option value="username">Username ↑</option>
+                  <option value="-username">Username ↓</option>
+                </select>
+                <button type="submit">Apply</button>
+              </form>
+            </article>
+          </div>
+          <article class="card">
+            <div class="table-header">
+              <h3>Admins</h3>
+              <div class="pager" id="admins-pager"></div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Username</th>
+                    <th>Admin ID</th>
+                  </tr>
+                </thead>
+                <tbody id="admins-table"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
+        <section id="tab-groups" class="tab-panel hidden stack gap-lg">
+          <div class="grid-2">
+            <article class="card">
+              <h3>Create group</h3>
+              <form id="create-group-form" class="stack">
+                <input id="create-group-name-input" type="text" placeholder="Group name" required />
+                <input id="create-group-owner-input" type="text" placeholder="Owner username" required />
+                <button type="submit">Create group</button>
+              </form>
+            </article>
+            <article class="card">
+              <h3>Search groups</h3>
+              <form id="groups-filter-form" class="stack compact-row">
+                <input id="groups-query" type="search" placeholder="Search groups" />
+                <select id="groups-sort">
+                  <option value="groupName">Group name ↑</option>
+                  <option value="-groupName">Group name ↓</option>
+                </select>
+                <button type="submit">Apply</button>
+              </form>
+            </article>
+          </div>
+          <div id="groups-workspace" class="grid-2 detail-grid detail-hidden">
+            <article class="card">
+              <div class="table-header">
+                <h3>Groups</h3>
+                <div class="pager" id="groups-pager"></div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Owner</th>
+                      <th>Members</th>
+                    </tr>
+                  </thead>
+                  <tbody id="groups-table"></tbody>
+                </table>
+              </div>
+            </article>
+
+            <section id="group-detail" class="stack gap-lg hidden">
+              <article class="card">
+                <div class="section-header">
+                  <div>
+                    <h3 id="group-detail-name">Group</h3>
+                    <p id="group-detail-meta" class="muted"></p>
+                  </div>
+                  <button id="delete-group-btn" class="danger">Delete group</button>
+                </div>
+                <form id="rename-group-form" class="stack compact-row">
+                  <input id="rename-group-input" type="text" placeholder="Rename group" required />
+                  <button type="submit">Rename</button>
+                </form>
+              </article>
+
+              <article class="card">
+                <h3>Members</h3>
+                <form id="add-member-form" class="stack compact-row">
+                  <input id="member-username-input" type="text" placeholder="username" required />
+                  <button type="submit">Add member</button>
+                </form>
+                <form id="transfer-owner-form" class="stack compact-row">
+                  <input id="new-owner-input" type="text" placeholder="new owner username" required />
+                  <button type="submit">Transfer ownership</button>
+                </form>
+                <ul id="group-members-list" class="list"></ul>
+              </article>
+
+              <article class="card">
+                <h3>Report</h3>
+                <div id="group-report"></div>
+              </article>
+
+              <article class="card">
+                <h3>CSV import</h3>
+                <form id="import-csv-form" class="stack">
+                  <input id="import-csv-file" type="file" accept=".csv,text/csv" />
+                  <textarea id="import-csv-text" rows="8" placeholder="Paste CSV here"></textarea>
+                  <button type="submit">Import CSV</button>
+                </form>
+              </article>
+
+              <article class="card">
+                <div class="table-header">
+                  <h3>Records</h3>
+                  <div class="pager" id="records-pager"></div>
+                </div>
+                <div class="grid-2">
+                  <form id="expense-record-form" class="stack">
+                    <input type="hidden" id="expense-record-id" />
+                    <h4 id="expense-form-title">Create expense</h4>
+                    <input id="expense-title-input" type="text" placeholder="Title" required />
+                    <input id="expense-amount-input" type="number" min="0" step="0.01" placeholder="Amount" required />
+                    <input id="expense-payer-input" type="text" placeholder="Paid by username" required />
+                    <input id="expense-date-input" type="date" required />
+                    <div class="stack gap-sm">
+                      <div class="section-header compact">
+                        <h5>Splits</h5>
+                        <button type="button" id="expense-add-split-btn" class="ghost">Add split</button>
+                      </div>
+                      <div id="expense-splits-list" class="stack gap-sm"></div>
+                    </div>
+                    <div class="row-actions">
+                      <button type="submit">Save expense</button>
+                      <button type="button" id="expense-cancel-btn" class="ghost hidden">Cancel edit</button>
+                    </div>
+                  </form>
+                  <form id="transfer-record-form" class="stack">
+                    <input type="hidden" id="transfer-record-id" />
+                    <h4 id="transfer-form-title">Create transfer</h4>
+                    <input id="transfer-amount-input" type="number" min="0" step="0.01" placeholder="Amount" required />
+                    <input id="transfer-payer-input" type="text" placeholder="Paid by username" required />
+                    <input id="transfer-receiver-input" type="text" placeholder="Transfer to username" required />
+                    <input id="transfer-date-input" type="date" required />
+                    <div class="row-actions">
+                      <button type="submit">Save transfer</button>
+                      <button type="button" id="transfer-cancel-btn" class="ghost hidden">Cancel edit</button>
+                    </div>
+                  </form>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Title</th>
+                        <th>Amount</th>
+                        <th>Type</th>
+                        <th>Date</th>
+                        <th></th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody id="records-table"></tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article class="card">
+                <div class="table-header">
+                  <h3>Receipts</h3>
+                  <div class="pager" id="receipts-pager"></div>
+                </div>
+                <form id="receipt-form" class="stack">
+                  <input type="hidden" id="receipt-id-input" />
+                  <h4 id="receipt-form-title">Create receipt</h4>
+                  <input id="receipt-note-input" type="text" placeholder="Note" required />
+                  <input id="receipt-uploaded-by-input" type="text" placeholder="Uploaded by username" required />
+                  <div class="stack gap-sm">
+                    <div class="section-header compact">
+                      <h5>Receipt records</h5>
+                      <button type="button" id="receipt-add-record-btn" class="ghost">Add record</button>
+                    </div>
+                    <div id="receipt-records-list" class="stack gap-sm"></div>
+                  </div>
+                  <div class="row-actions">
+                    <button type="submit">Save receipt</button>
+                    <button type="button" id="receipt-cancel-btn" class="ghost hidden">Cancel edit</button>
+                  </div>
+                </form>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Note</th>
+                        <th>Uploaded by</th>
+                        <th>Records</th>
+                        <th></th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody id="receipts-table"></tbody>
+                  </table>
+                </div>
+              </article>
+            </section>
+          </div>
+        </section>
+      </main>
+    </section>
+  </div>
+  <script src="/admin-ui/app.js" defer></script>
+</body>
+
+</html>

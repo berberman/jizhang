@@ -14,6 +14,7 @@ build-type:      Simple
 extra-doc-files: CHANGELOG.md
 data-files:
   sql/*.sql
+  ui/*
 
 common opts
   ghc-options:      -Wall
@@ -34,10 +35,11 @@ library
     Jizhang.API.Admin.Groups
     Jizhang.API.Admin.Users
     Jizhang.API.AdminAuth
+    Jizhang.API.AdminUI
     Jizhang.API.Common
     Jizhang.API.Auth
     Jizhang.API.Group
-    Jizhang.API.Import
+    Jizhang.API.GroupImport
     Jizhang.API.Receipt
     Jizhang.API.Record
     Jizhang.API.Report
@@ -67,9 +69,11 @@ library
     , beam-core             ^>=0.10.4
     , beam-postgres         ^>=0.5.4
     , bytestring
-    , cassava
-    , containers
-    , http-media
+     , cassava
+     , containers
+     , cookie
+     , filepath
+     , http-media
     , log-base              ^>=0.12.1
     , monad-control
     , mtl

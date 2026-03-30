@@ -12,6 +12,8 @@ import Data.Swagger (ToSchema)
 import Data.Text (Text)
 import Data.UUID (UUID)
 import GHC.Generics (Generic)
+import Jizhang.API.Types.Record (ExpenseRecordRequest)
+import Jizhang.API.Types.User (Username)
 import Servant.Auth.JWT (FromJWT, ToJWT)
 
 data AdminBootstrap = AdminBootstrap
@@ -52,6 +54,21 @@ data AdminCreateUserRequest = AdminCreateUserRequest
 data AdminCreateAdminRequest = AdminCreateAdminRequest
   { createAdminUsername :: !Text,
     createAdminPassword :: !Text
+  }
+  deriving stock (Show, Eq, Ord, Generic, Typeable)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data AdminCreateGroupRequest = AdminCreateGroupRequest
+  { createGroupName :: !Text,
+    ownerUsername :: !Username
+  }
+  deriving stock (Show, Eq, Ord, Generic, Typeable)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data AdminCreateReceiptRequest = AdminCreateReceiptRequest
+  { uploadedByUsername :: !Username,
+    note :: !Text,
+    records :: ![ExpenseRecordRequest]
   }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
   deriving anyclass (ToJSON, FromJSON, ToSchema)

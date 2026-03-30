@@ -14,12 +14,14 @@ import Data.Coerce (coerce)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.UUID (toText)
+import Jizhang.API.GroupImport
 import Jizhang.API.Types
 import Jizhang.API.Utils
 import qualified Jizhang.Database as D
 import qualified Jizhang.Database.Schema as S
 import Log.Class
 import Servant
+import Jizhang.API.Record (addExpenseRecord)
 
 type GroupAPI =
   -- Create a new group
@@ -36,6 +38,8 @@ type GroupAPI =
     :<|> "groups" :> Capture "groupId" GroupId :> "members" :> Capture "username" Username :> Delete '[JSON] NoContent
     -- Transfer group ownership (requires ownership)
     :<|> "groups" :> Capture "groupId" GroupId :> "owner" :> ReqBody '[JSON] Username :> Put '[JSON] Group
+    -- Import expense records from CSV (requires membership)
+    :<|> "groups" :> Capture "groupId" GroupId :> "import" :> ReqBody '[CSV] CSVData :> Post '[JSON] [Record]
 
 groupServer :: AuthUser -> MyServer GroupAPI
 groupServer authUser =
@@ -46,6 +50,7 @@ groupServer authUser =
     :<|> addGroupMember authUser
     :<|> deleteGroupMember authUser
     :<|> transferOwnership authUser
+    :<|> importGroupCSV authUser
 
 -- | Get a group by ID, checking that the authenticated user is a member
 getGroupEndpoint :: AuthUser -> GroupId -> MyHandler Group
@@ -138,3 +143,9 @@ transferOwnership authUser (GroupId gId) (Username u) = do
   unless isMember $ throwError $ err400 {errBody = "New owner must be a member of the group"}
   runDB $ D.updateGroupOwner gId (S._userId sUser)
   getGroup (GroupId gId)
+
+importGroupCSV :: AuthUser -> GroupId -> CSVData -> MyHandler [Record]
+importGroupCSV authUser gid@(GroupId rawGroupId) (CSVData csvData) = do
+  ensureGroupExists rawGroupId
+  ensureGroupMember (authUserId authUser) rawGroupId
+  parseRecords csvData >>= mapM (addExpenseRecord authUser gid)

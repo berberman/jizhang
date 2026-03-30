@@ -8,11 +8,11 @@ module Jizhang.API where
 import Control.Monad.Reader (ReaderT (..))
 import Data.Swagger (Swagger)
 import Jizhang.API.Admin
-import Jizhang.API.AdminAuth
+import Jizhang.API.AdminAuth (AdminAuthAPI, adminAuthServer, adminCookieSettings, bootstrapAdmin)
+import Jizhang.API.AdminUI
 import Jizhang.API.Auth
 import Jizhang.API.Common ()
 import Jizhang.API.Group
-import Jizhang.API.Import
 import Jizhang.API.Receipt
 import Jizhang.API.Record
 import Jizhang.API.Report
@@ -31,18 +31,17 @@ jizhangServer authUser =
     :<|> groupServer authUser
     :<|> recordServer authUser
     :<|> reportServer authUser
-    :<|> importServer authUser
     :<|> receiptServer authUser
 
 type SwaggerAPI = "swagger.json" :> Get '[JSON] Swagger
 
-type JizhangAPI = UserAPI :<|> GroupAPI :<|> RecordAPI :<|> ReportAPI :<|> ImportAPI :<|> ReceiptAPI
+type JizhangAPI = UserAPI :<|> GroupAPI :<|> RecordAPI :<|> ReportAPI :<|> ReceiptAPI
 
 type ProtectedAPI = Auth '[JWT] AuthUser :> JizhangAPI
 
-type ProtectedAdminAPI = Auth '[JWT] AuthAdmin :> AdminAPI
+type ProtectedAdminAPI = Auth '[JWT, Cookie] AuthAdmin :> AdminAPI
 
-type API = AuthAPI :<|> AdminAuthAPI :<|> ProtectedAPI :<|> ProtectedAdminAPI :<|> SwaggerAPI
+type API = AuthAPI :<|> AdminAuthAPI :<|> AdminUIAPI :<|> ProtectedAPI :<|> ProtectedAdminAPI :<|> SwaggerAPI
 
 swaggerServer :: MyServer SwaggerAPI
 swaggerServer = pure $ toSwagger (Proxy :: Proxy (AuthAPI :<|> AdminAuthAPI :<|> ProtectedAPI :<|> ProtectedAdminAPI))
@@ -59,7 +58,7 @@ api :: Proxy API
 api = Proxy
 
 server :: ServerT API MyHandler
-server = authServer :<|> adminAuthServer :<|> protectedServer :<|> protectedAdminServer :<|> swaggerServer
+server = authServer :<|> adminAuthServer :<|> adminUIServer :<|> protectedServer :<|> protectedAdminServer :<|> swaggerServer
 
 type AppContext = '[CookieSettings, JWTSettings]
 
@@ -68,7 +67,7 @@ app appEnv = do
   bootstrapAdmin appEnv
   env <- getLoggerEnv
   let jwtCfg = appJWTSettings appEnv
-      cookieCfg = defaultCookieSettings
+      cookieCfg = adminCookieSettings
       ctx = cookieCfg :. jwtCfg :. EmptyContext
       nat :: forall x. MyHandler x -> Handler x
       nat =

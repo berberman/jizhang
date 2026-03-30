@@ -3,6 +3,7 @@
 
 module Jizhang.API.Admin.Groups
   ( getAllGroups,
+    createGroup,
     bulkDeleteGroups,
     getGroupById,
     updateGroup,
@@ -12,12 +13,16 @@ module Jizhang.API.Admin.Groups
     deleteGroupMember,
     bulkDeleteGroupMembers,
     transferOwnership,
+    importGroupCSV,
+    addExpenseRecord,
+    addTransferRecord,
     getGroupRecords,
     bulkDeleteRecords,
     deleteRecord,
     updateTransfer,
     updateExpense,
     getGroupReport,
+    createReceipt,
     getGroupReceipts,
     bulkDeleteReceipts,
     deleteReceipt,
@@ -35,6 +40,7 @@ import Data.Time (Day)
 import Data.UUID (UUID, toText)
 import Jizhang.API.Admin.Common
 import Jizhang.API.Group (getGroup)
+import Jizhang.API.GroupImport
 import Jizhang.API.Receipt (getReceiptsByGroupId)
 import Jizhang.API.Record (getRecordsByGroupId)
 import Jizhang.API.Report (getReportByGroupId)
@@ -57,6 +63,16 @@ getAllGroups authAdmin mQuery mOffset mLimit mSort =
     mOffset
     mLimit
     mSort
+
+createGroup :: AuthAdmin -> AdminCreateGroupRequest -> MyHandler Group
+createGroup authAdmin AdminCreateGroupRequest {..} = do
+  logInfo_ $ "Creating group as admin: " <> authAdminUsername authAdmin <> " name=" <> createGroupName
+  validateGroupName createGroupName
+  ownerUser <- lookupUser (coerce ownerUsername)
+  let ownerUid = S._userId ownerUser
+  group <- runDB $ D.insertGroup createGroupName ownerUid
+  _ <- runDB $ D.addGroupMember ownerUid (S._groupId group)
+  getGroup (coerce $ S._groupId group)
 
 bulkDeleteGroups :: AuthAdmin -> BulkRequest GroupId -> MyHandler NoContent
 bulkDeleteGroups authAdmin (BulkRequest groupIds) =
@@ -133,6 +149,36 @@ transferOwnership authAdmin (GroupId gid) (Username username) = do
   runDB $ D.updateGroupOwner gid (S._userId sUser)
   getGroup (GroupId gid)
 
+importGroupCSV :: AuthAdmin -> GroupId -> CSVData -> MyHandler [Record]
+importGroupCSV authAdmin (GroupId gid) (CSVData csvData) = do
+  logInfo_ $ "Importing CSV into group " <> toText gid <> " as admin: " <> authAdminUsername authAdmin
+  ensureGroupExists gid
+  parseRecords csvData >>= mapM (addExpenseRecord authAdmin (GroupId gid))
+
+addExpenseRecord :: AuthAdmin -> GroupId -> ExpenseRecordRequest -> MyHandler Record
+addExpenseRecord authAdmin (GroupId gid) req = do
+  logInfo_ $ "Adding expense record to group " <> toText gid <> " as admin: " <> authAdminUsername authAdmin
+  ensureGroupExists gid
+  resolved <- resolveExpenseUpdate gid req
+  (record, recordSplits) <- runDB $ do
+    let (recordTitle, recordAmount, payerId, recordDate, splitUsers) = resolved
+    rec <- D.insertRecord recordTitle recordAmount payerId Nothing gid recordDate Nothing
+    ss <- forM splitUsers $ \(uid, sh) -> D.insertRecordSplit (S._recordId rec) uid sh
+    pure (rec, ss)
+  um <- getGroupUserMap gid
+  pure $ recordToExpenseRecord um record recordSplits
+
+addTransferRecord :: AuthAdmin -> GroupId -> TransferRecordRequest -> MyHandler Record
+addTransferRecord authAdmin (GroupId gid) req@TransferRecordRequest {..} = do
+  logInfo_ $ "Adding transfer record to group " <> toText gid <> " as admin: " <> authAdminUsername authAdmin
+  ensureGroupExists gid
+  validateTransferRecordRequest gid req
+  payer <- lookupUser (coerce byUsername)
+  receiver <- lookupUser (coerce toUsername)
+  record <- runDB $ D.insertRecord "Transfer" amount (S._userId payer) (Just (S._userId receiver)) gid date Nothing
+  um <- getGroupUserMap gid
+  pure $ recordToTransferRecord um record
+
 getGroupRecords :: AuthAdmin -> GroupId -> MyHandler [Record]
 getGroupRecords authAdmin (GroupId gid) = do
   logInfo_ $ "Fetching group records for admin: " <> authAdminUsername authAdmin
@@ -185,6 +231,25 @@ getGroupReport :: AuthAdmin -> GroupId -> MyHandler Report
 getGroupReport authAdmin (GroupId gid) = do
   logInfo_ $ "Fetching group report for admin: " <> authAdminUsername authAdmin
   getReportByGroupId gid
+
+createReceipt :: AuthAdmin -> GroupId -> AdminCreateReceiptRequest -> MyHandler Receipt
+createReceipt authAdmin (GroupId gid) AdminCreateReceiptRequest {..} = do
+  logInfo_ $ "Creating receipt in group " <> toText gid <> " as admin: " <> authAdminUsername authAdmin
+  ensureGroupExists gid
+  uploadedByUser <- lookupUser (coerce uploadedByUsername)
+  resolved <- resolveReceiptUpdate gid records
+  (receipt, dbRecords) <- runDB $ do
+    rct <- D.insertReceipt gid (S._userId uploadedByUser) note
+    let rctId = S._receiptId rct
+    recs <- forM resolved $ \(recordTitle, recordAmount, payerId, recordDate, splitUsers) -> do
+      rec <- D.insertRecord recordTitle recordAmount payerId Nothing gid recordDate (Just rctId)
+      ss <- forM splitUsers $ \(uid, sh) -> D.insertRecordSplit (S._recordId rec) uid sh
+      pure (rec, ss)
+    pure (rct, recs)
+  um <- getGroupUserMap gid
+  let apiRecords = [recordToExpenseRecord um rec ss | (rec, ss) <- dbRecords]
+      uploadedByApiUser = resolveUser um (S.unUserId $ S._receiptUploadedBy receipt)
+  pure $ Receipt (coerce $ S._receiptId receipt) (coerce gid) uploadedByApiUser note apiRecords (S._receiptCreatedAt receipt)
 
 getGroupReceipts :: AuthAdmin -> GroupId -> MyHandler [Receipt]
 getGroupReceipts authAdmin (GroupId gid) = do
