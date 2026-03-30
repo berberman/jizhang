@@ -6,14 +6,16 @@
 
 module APITest (apiTests) where
 
+import Data.ByteString.Char8 (pack)
 import Data.List (sort)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.ByteString.Char8 (pack)
-import Data.Maybe (fromMaybe)
-import Database.PostgreSQL.Simple (connectPostgreSQL, close)
-import System.Environment (lookupEnv)
+import Data.Text.Encoding (encodeUtf8)
+import Database.PostgreSQL.Simple (close, connectPostgreSQL)
 import Jizhang.API (app)
+import Jizhang.API.Admin (AdminAPI)
+import Jizhang.API.AdminAuth (AdminAuthAPI)
 import Jizhang.API.Auth (AuthAPI)
 import Jizhang.API.Group (GroupAPI)
 import Jizhang.API.Import (ImportAPI)
@@ -31,9 +33,9 @@ import Network.Wai.Handler.Warp (testWithApplication)
 import Servant hiding (addHeader)
 import Servant.Auth (Auth, JWT)
 import Servant.Auth.Client (Token (..))
-import Servant.Client
-import Data.Text.Encoding (encodeUtf8)
 import Servant.Auth.Server (defaultJWTSettings, generateKey)
+import Servant.Client
+import System.Environment (lookupEnv)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -46,20 +48,29 @@ register_ :: RegisterRequest -> ClientM User
 login_ :: LoginRequest -> ClientM LoginResponse
 (register_ :<|> login_) = client (Proxy :: Proxy AuthAPI)
 
+adminLogin_ :: AdminLoginRequest -> ClientM AdminLoginResponse
+adminLogin_ = client (Proxy :: Proxy AdminAuthAPI)
+
 -- Protected endpoints (require JWT auth token)
 type TestProtectedAPI =
   Auth '[JWT] AuthUser :> (UserAPI :<|> GroupAPI :<|> RecordAPI :<|> ReportAPI :<|> ImportAPI :<|> ReceiptAPI)
+
+type TestProtectedAdminAPI =
+  Auth '[JWT] AuthAdmin :> AdminAPI
 
 protectedClient_ ::
   Token ->
   Client ClientM (UserAPI :<|> GroupAPI :<|> RecordAPI :<|> ReportAPI :<|> ImportAPI :<|> ReceiptAPI)
 protectedClient_ = client (Proxy :: Proxy TestProtectedAPI)
 
+protectedAdminClient_ :: Token -> Client ClientM AdminAPI
+protectedAdminClient_ = client (Proxy :: Proxy TestProtectedAdminAPI)
+
 -- Convenience record holding all destructured client functions
 data TC = TC
   { cGetMe :: ClientM User,
     cDeleteMe :: ClientM NoContent,
-    cGetMyGroups :: ClientM [Group],
+    cGetMyGroups :: Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> ClientM (PaginatedResponse Group),
     cCreateGroup :: Text -> ClientM Group,
     cGetGroupById :: GroupId -> ClientM Group,
     cUpdateGroupById :: GroupId -> Text -> ClientM Group,
@@ -70,16 +81,45 @@ data TC = TC
     cAddExpense :: GroupId -> ExpenseRecordRequest -> ClientM Record,
     cAddTransfer :: GroupId -> TransferRecordRequest -> ClientM Record,
     cGetRecord :: GroupId -> RecordId -> ClientM Record,
-    cGetRecords :: GroupId -> ClientM [Record],
+    cGetRecords :: GroupId -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> ClientM (PaginatedResponse Record),
     cDeleteRecord :: GroupId -> RecordId -> ClientM NoContent,
     cUpdateTransfer :: GroupId -> RecordId -> TransferRecordRequest -> ClientM Record,
     cUpdateExpense :: GroupId -> RecordId -> ExpenseRecordRequest -> ClientM Record,
     cGetReport :: GroupId -> ClientM Report,
     cCreateReceipt :: GroupId -> CreateReceiptRequest -> ClientM Receipt,
-    cGetReceipts :: GroupId -> ClientM [Receipt],
+    cGetReceipts :: GroupId -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> ClientM (PaginatedResponse Receipt),
     cGetReceipt :: GroupId -> ReceiptId -> ClientM Receipt,
     cDeleteReceipt :: GroupId -> ReceiptId -> ClientM NoContent,
     cUpdateReceipt :: GroupId -> ReceiptId -> UpdateReceiptRequest -> ClientM Receipt
+  }
+
+data AdminTC = AdminTC
+  { cAdminUsers :: Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> ClientM (PaginatedResponse User),
+    cAdminCreateUser :: AdminCreateUserRequest -> ClientM User,
+    cAdminBulkDeleteUsers :: BulkRequest UserId -> ClientM NoContent,
+    cAdminDeleteUser :: UserId -> ClientM NoContent,
+    cAdminAdmins :: Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> ClientM (PaginatedResponse AdminSummary),
+    cAdminCreateAdmin :: AdminCreateAdminRequest -> ClientM AdminSummary,
+    cAdminGroups :: Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> ClientM (PaginatedResponse Group),
+    cAdminBulkDeleteGroups :: BulkRequest GroupId -> ClientM NoContent,
+    cAdminGroup :: GroupId -> ClientM Group,
+    cAdminUpdateGroup :: GroupId -> Text -> ClientM Group,
+    cAdminDeleteGroup :: GroupId -> ClientM NoContent,
+    cAdminAddMember :: GroupId -> Username -> ClientM Group,
+    cAdminBulkAddMembers :: GroupId -> BulkRequest Username -> ClientM Group,
+    cAdminDeleteMember :: GroupId -> Username -> ClientM NoContent,
+    cAdminBulkDeleteMembers :: GroupId -> BulkRequest Username -> ClientM NoContent,
+    cAdminTransferOwnership :: GroupId -> Username -> ClientM Group,
+    cAdminGroupRecords :: GroupId -> ClientM [Record],
+    cAdminBulkDeleteRecords :: GroupId -> BulkRequest RecordId -> ClientM NoContent,
+    cAdminDeleteRecord :: GroupId -> RecordId -> ClientM NoContent,
+    cAdminUpdateTransfer :: GroupId -> RecordId -> TransferRecordRequest -> ClientM Record,
+    cAdminUpdateExpense :: GroupId -> RecordId -> ExpenseRecordRequest -> ClientM Record,
+    cAdminGroupReport :: GroupId -> ClientM Report,
+    cAdminGroupReceipts :: GroupId -> ClientM [Receipt],
+    cAdminBulkDeleteReceipts :: GroupId -> BulkRequest ReceiptId -> ClientM NoContent,
+    cAdminDeleteReceipt :: GroupId -> ReceiptId -> ClientM NoContent,
+    cAdminUpdateReceipt :: GroupId -> ReceiptId -> UpdateReceiptRequest -> ClientM Receipt
   }
 
 mkTC :: Text -> TC
@@ -92,19 +132,28 @@ mkTC tok =
       (d1 :<|> d2 :<|> d3 :<|> d4 :<|> d5) = rcp
    in TC a1 a2 a3 b1 b2 b3 b4 b5 b6 b7 c1 c2 c3 c4 c5 c6 c7 rpt d1 d2 d3 d4 d5
 
+mkAdminTC :: Text -> AdminTC
+mkAdminTC tok =
+  let auth = Token (encodeUtf8 tok)
+      (a1 :<|> a2 :<|> a3 :<|> a4 :<|> a5 :<|> a6 :<|> a7 :<|> a8 :<|> a9 :<|> a10 :<|> a11 :<|> a12 :<|> a13 :<|> a14 :<|> a15 :<|> a16 :<|> a17 :<|> a18 :<|> a19 :<|> a20 :<|> a21 :<|> a22 :<|> a23 :<|> a24 :<|> a25 :<|> a26) = protectedAdminClient_ auth
+   in AdminTC a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 a25 a26
+
 -- ============================================================
 -- Test infrastructure
 -- ============================================================
 
 withTestApp :: (ClientEnv -> IO a) -> IO a
-withTestApp action = withStdOutLogger $ \logger -> do
+withTestApp = withTestAppWithBootstrap Nothing
+
+withTestAppWithBootstrap :: Maybe AdminBootstrap -> (ClientEnv -> IO a) -> IO a
+withTestAppWithBootstrap adminBootstrap action = withStdOutLogger $ \logger -> do
   connStr <- fromMaybe "dbname=jizhang_test" . fmap pack <$> lookupEnv "TEST_DATABASE_URL"
   conn <- connectPostgreSQL connStr
   dropTables conn
   createTables conn
   jwk <- generateKey
   let jwtCfg = defaultJWTSettings jwk
-      appEnv = AppEnv conn jwtCfg
+      appEnv = AppEnv conn jwtCfg adminBootstrap
   waiApp <- runLogT "test" logger maxBound $ app appEnv
   manager <- newManager defaultManagerSettings
   testWithApplication (pure waiApp) $ \port -> do
@@ -135,7 +184,8 @@ runClientExpectStatus env expectedStatus action = do
 -- | Assert that a Double is approximately equal
 assertApproxEqual :: String -> Double -> Double -> Assertion
 assertApproxEqual msg expected actual =
-  assertBool (msg ++ ": expected " ++ show expected ++ " but got " ++ show actual)
+  assertBool
+    (msg ++ ": expected " ++ show expected ++ " but got " ++ show actual)
     (abs (expected - actual) < 1e-9)
 
 -- | Register a user and log in, return session token
@@ -143,6 +193,16 @@ setupUser :: ClientEnv -> Text -> IO Text
 setupUser env name = do
   _ <- runClient env $ register_ (RegisterRequest name "password123")
   resp <- runClient env $ login_ (LoginRequest name "password123")
+  pure resp.accessToken
+
+loginWithPassword :: ClientEnv -> Text -> Text -> IO Text
+loginWithPassword env name password = do
+  resp <- runClient env $ login_ (LoginRequest name password)
+  pure resp.accessToken
+
+setupAdmin :: ClientEnv -> Text -> Text -> IO Text
+setupAdmin env name password = do
+  resp <- runClient env $ adminLogin_ (AdminLoginRequest name password)
   pure resp.accessToken
 
 -- ============================================================
@@ -165,6 +225,29 @@ grpOwnerName (Group _ _ o _) = userName o
 grpMemberNames :: Group -> [Text]
 grpMemberNames (Group _ _ _ ms) = sort $ map userName ms
 
+titleOfRecord :: Record -> Text
+titleOfRecord ExpenseRecord {title = t} = t
+titleOfRecord TransferRecord {title = t} = t
+
+adminSummaryUsername :: AdminSummary -> Text
+adminSummaryUsername (AdminSummary _ uname) = uname
+
+pageItems :: PaginatedResponse a -> [a]
+pageItems (PaginatedResponse xs _ _ _) = xs
+
+pageMeta :: PaginatedResponse a -> PageInfo
+pageMeta (PaginatedResponse _ meta _ _) = meta
+
+withPagination :: (Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> ClientM a) -> PaginationParams -> ClientM a
+withPagination clientCall params =
+  let (mQuery, mOffset, mLimit, mSort) = toPaginationArgs params
+   in clientCall mQuery mOffset mLimit mSort
+
+withPagination1 :: (a -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> ClientM b) -> a -> PaginationParams -> ClientM b
+withPagination1 clientCall arg params =
+  let (mQuery, mOffset, mLimit, mSort) = toPaginationArgs params
+   in clientCall arg mQuery mOffset mLimit mSort
+
 extractRecordId :: Record -> RecordId
 extractRecordId ExpenseRecord {..} = recordId
 extractRecordId TransferRecord {..} = recordId
@@ -184,6 +267,7 @@ apiTests =
   testGroup
     "API Integration"
     [ authTests,
+      adminTests,
       userTests,
       groupTests,
       recordTests,
@@ -218,6 +302,193 @@ authTests =
       testCase "protected endpoint without token => 401" $ withTestApp $ \env -> do
         let tc = mkTC "invalid-token"
         runClientExpectStatus env status401 (cGetMe tc)
+    ]
+
+adminTests :: TestTree
+adminTests =
+  testGroup
+    "Admin"
+    [ testCase "bootstrap admin can list all users" $ withTestAppWithBootstrap (Just $ AdminBootstrap "admin" "adminpass123") $ \env -> do
+        tokAdmin <- setupAdmin env "admin" "adminpass123"
+        _ <- setupUser env "bob"
+        let tcAdmin = mkAdminTC tokAdmin
+        users <- runClient env $ withPagination (cAdminUsers tcAdmin) defaultPaginationParams
+        assertEqual "usernames" ["bob"] (sort $ map userName $ pageItems users),
+      testCase "app user token cannot access admin endpoints => 401" $ withTestAppWithBootstrap (Just $ AdminBootstrap "admin" "adminpass123") $ \env -> do
+        tokBob <- setupUser env "bob"
+        runClientExpectStatus env status401 $ cAdminUsers (mkAdminTC tokBob) Nothing Nothing Nothing Nothing,
+      testCase "admin can create users and admins" $ withTestAppWithBootstrap (Just $ AdminBootstrap "rootadmin" "adminpass123") $ \env -> do
+        tokAdmin <- setupAdmin env "rootadmin" "adminpass123"
+        let tcAdmin = mkAdminTC tokAdmin
+        createdUser <- runClient env $ cAdminCreateUser tcAdmin (AdminCreateUserRequest "carol" "password123")
+        assertEqual "created user" "carol" (userName createdUser)
+        createdAdmin <- runClient env $ cAdminCreateAdmin tcAdmin (AdminCreateAdminRequest "ops" "password123")
+        assertEqual "created admin" "ops" (adminSummaryUsername createdAdmin)
+        tokOps <- setupAdmin env "ops" "password123"
+        let tcOps = mkAdminTC tokOps
+        admins <- runClient env $ cAdminAdmins tcOps Nothing Nothing Nothing Nothing
+        assertEqual "admin usernames" ["ops", "rootadmin"] (sort $ map adminSummaryUsername $ pageItems admins),
+      testCase "admin list endpoints support query filters" $ withTestAppWithBootstrap (Just $ AdminBootstrap "rootadmin" "adminpass123") $ \env -> do
+        tokAdmin <- setupAdmin env "rootadmin" "adminpass123"
+        let tcAdmin = mkAdminTC tokAdmin
+        _ <- runClient env $ cAdminCreateUser tcAdmin (AdminCreateUserRequest "alice" "password123")
+        _ <- runClient env $ cAdminCreateUser tcAdmin (AdminCreateUserRequest "bob" "password123")
+        _ <- runClient env $ cAdminCreateAdmin tcAdmin (AdminCreateAdminRequest "ops-team" "password123")
+        tokAlice <- loginWithPassword env "alice" "password123"
+        let tcAlice = mkTC tokAlice
+        _ <- runClient env $ cCreateGroup tcAlice "Summer Trip"
+        _ <- runClient env $ cCreateGroup tcAlice "Work Budget"
+        users <- runClient env $ withPagination (cAdminUsers tcAdmin) defaultPaginationParams {paginationQuery = Just "ali"}
+        assertEqual "filtered users" ["alice"] (map userName $ pageItems users)
+        admins <- runClient env $ withPagination (cAdminAdmins tcAdmin) defaultPaginationParams {paginationQuery = Just "ops"}
+        assertEqual "filtered admins" ["ops-team"] (map adminSummaryUsername $ pageItems admins)
+        groups <- runClient env $ withPagination (cAdminGroups tcAdmin) defaultPaginationParams {paginationQuery = Just "trip"}
+        assertEqual "filtered groups" ["Summer Trip"] (map grpName $ pageItems groups),
+      testCase "admin list endpoints support pagination and sorting" $ withTestAppWithBootstrap (Just $ AdminBootstrap "rootadmin" "adminpass123") $ \env -> do
+        tokAdmin <- setupAdmin env "rootadmin" "adminpass123"
+        let tcAdmin = mkAdminTC tokAdmin
+        _ <- runClient env $ cAdminCreateUser tcAdmin (AdminCreateUserRequest "charlie" "password123")
+        _ <- runClient env $ cAdminCreateUser tcAdmin (AdminCreateUserRequest "alice" "password123")
+        _ <- runClient env $ cAdminCreateUser tcAdmin (AdminCreateUserRequest "bob" "password123")
+        page1 <- runClient env $ withPagination (cAdminUsers tcAdmin) defaultPaginationParams {paginationOffset = Just 0, paginationLimit = Just 2, paginationSort = Just "username"}
+        let PageInfo off1 lim1 total1 hasNext1 hasPrev1 = pageMeta page1
+        assertEqual "page1 users" ["alice", "bob"] (map userName $ pageItems page1)
+        assertEqual "page1 offset" 0 off1
+        assertEqual "page1 limit" 2 lim1
+        assertEqual "page1 total" 3 total1
+        assertEqual "page1 hasNext" True hasNext1
+        assertEqual "page1 hasPrev" False hasPrev1
+        page2 <- runClient env $ withPagination (cAdminUsers tcAdmin) defaultPaginationParams {paginationOffset = Just 2, paginationLimit = Just 2, paginationSort = Just "username"}
+        assertEqual "page2 users" ["charlie"] (map userName $ pageItems page2)
+        descPage <- runClient env $ withPagination (cAdminUsers tcAdmin) defaultPaginationParams {paginationOffset = Just 0, paginationLimit = Just 3, paginationSort = Just "-username"}
+        assertEqual "descending users" ["charlie", "bob", "alice"] (map userName $ pageItems descPage),
+      testCase "admin can inspect groups without membership" $ withTestAppWithBootstrap (Just $ AdminBootstrap "admin" "adminpass123") $ \env -> do
+        tokAdmin <- setupAdmin env "admin" "adminpass123"
+        tokAlice <- setupUser env "alice"
+        _ <- setupUser env "bob"
+        let tcAdmin = mkAdminTC tokAdmin
+            tcAlice = mkTC tokAlice
+        g <- runClient env $ cCreateGroup tcAlice "Trip"
+        _ <- runClient env $ cAddMember tcAlice (grpId g) (Username "bob")
+        _ <- runClient env $ cAddExpense tcAlice (grpId g) (ExpenseRecordRequest "Dinner" 100.0 (Username "alice") (read "2025-06-01") [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1])
+        groups <- runClient env $ cAdminGroups tcAdmin Nothing Nothing Nothing Nothing
+        assertEqual "group names" ["Trip"] (map grpName $ pageItems groups)
+        fetched <- runClient env $ cAdminGroup tcAdmin (grpId g)
+        assertEqual "fetched group name" "Trip" (grpName fetched)
+        records <- runClient env $ cAdminGroupRecords tcAdmin (grpId g)
+        assertEqual "record count" 1 (length records)
+        report <- runClient env $ cAdminGroupReport tcAdmin (grpId g)
+        assertEqual "settlement count" 1 (length $ settlements report)
+        receipts <- runClient env $ cAdminGroupReceipts tcAdmin (grpId g)
+        assertEqual "receipt count" 0 (length receipts),
+      testCase "admin can update group and membership without ownership" $ withTestAppWithBootstrap (Just $ AdminBootstrap "admin" "adminpass123") $ \env -> do
+        tokAdmin <- setupAdmin env "admin" "adminpass123"
+        tokAlice <- setupUser env "alice"
+        _ <- setupUser env "bob"
+        let tcAdmin = mkAdminTC tokAdmin
+            tcAlice = mkTC tokAlice
+        g <- runClient env $ cCreateGroup tcAlice "Trip"
+        g1 <- runClient env $ cAdminUpdateGroup tcAdmin (grpId g) "Renamed Trip"
+        assertEqual "updated name" "Renamed Trip" (grpName g1)
+        g2 <- runClient env $ cAdminAddMember tcAdmin (grpId g) (Username "bob")
+        assertEqual "members after add" ["alice", "bob"] (sort $ grpMemberNames g2)
+        _ <- runClient env $ cAdminTransferOwnership tcAdmin (grpId g) (Username "bob")
+        fetched <- runClient env $ cAdminGroup tcAdmin (grpId g)
+        assertEqual "new owner" "bob" (grpOwnerName fetched)
+        _ <- runClient env $ cAdminDeleteMember tcAdmin (grpId g) (Username "alice")
+        fetched2 <- runClient env $ cAdminGroup tcAdmin (grpId g)
+        assertEqual "members after delete" ["bob"] (grpMemberNames fetched2),
+      testCase "admin can update and delete records" $ withTestAppWithBootstrap (Just $ AdminBootstrap "admin" "adminpass123") $ \env -> do
+        tokAdmin <- setupAdmin env "admin" "adminpass123"
+        tokAlice <- setupUser env "alice"
+        _ <- setupUser env "bob"
+        let tcAdmin = mkAdminTC tokAdmin
+            tcAlice = mkTC tokAlice
+        g <- runClient env $ cCreateGroup tcAlice "Trip"
+        _ <- runClient env $ cAddMember tcAlice (grpId g) (Username "bob")
+        expense <- runClient env $ cAddExpense tcAlice (grpId g) (ExpenseRecordRequest "Dinner" 100.0 (Username "alice") (read "2025-06-01") [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1])
+        expense' <- runClient env $ cAdminUpdateExpense tcAdmin (grpId g) (extractRecordId expense) (ExpenseRecordRequest "Lunch" 40.0 (Username "bob") (read "2025-06-02") [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1])
+        case expense' of
+          ExpenseRecord {title = recordTitle, amount = recordAmount, paidBy = payer} -> do
+            assertEqual "updated title" "Lunch" recordTitle
+            assertEqual "updated amount" 40.0 recordAmount
+            assertEqual "updated payer" "bob" (userName payer)
+          _ -> assertFailure "Expected updated expense record"
+        transfer <- runClient env $ cAddTransfer tcAlice (grpId g) (TransferRecordRequest 10.0 (Username "alice") (Username "bob") (read "2025-06-03"))
+        transfer' <- runClient env $ cAdminUpdateTransfer tcAdmin (grpId g) (extractRecordId transfer) (TransferRecordRequest 25.0 (Username "bob") (Username "alice") (read "2025-06-04"))
+        case transfer' of
+          TransferRecord {amount = transferAmount, paidBy = payer, transferTo = receiver} -> do
+            assertEqual "updated transfer amount" 25.0 transferAmount
+            assertEqual "updated transfer payer" "bob" (userName payer)
+            assertEqual "updated transfer receiver" "alice" (userName receiver)
+          _ -> assertFailure "Expected updated transfer record"
+        _ <- runClient env $ cAdminDeleteRecord tcAdmin (grpId g) (extractRecordId transfer)
+        runClientExpectStatus env status404 $ cGetRecord tcAlice (grpId g) (extractRecordId transfer),
+      testCase "admin can update and delete receipts" $ withTestAppWithBootstrap (Just $ AdminBootstrap "admin" "adminpass123") $ \env -> do
+        tokAdmin <- setupAdmin env "admin" "adminpass123"
+        tokAlice <- setupUser env "alice"
+        _ <- setupUser env "bob"
+        let tcAdmin = mkAdminTC tokAdmin
+            tcAlice = mkTC tokAlice
+        g <- runClient env $ cCreateGroup tcAlice "Trip"
+        _ <- runClient env $ cAddMember tcAlice (grpId g) (Username "bob")
+        receipt <- runClient env $ cCreateReceipt tcAlice (grpId g) (CreateReceiptRequest "Original" [ExpenseRecordRequest "Dinner" 100.0 (Username "alice") (read "2025-06-01") [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1]])
+        receipt' <- runClient env $ cAdminUpdateReceipt tcAdmin (grpId g) (receiptId receipt) (UpdateReceiptRequest "Updated" [ExpenseRecordRequest "Taxi" 60.0 (Username "bob") (read "2025-06-02") [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1]])
+        let Receipt _ _ _ updatedNote updatedRecords _ = receipt'
+        assertEqual "updated receipt note" "Updated" updatedNote
+        assertEqual "updated receipt record title" ["Taxi"] (map titleOfRecord updatedRecords)
+        _ <- runClient env $ cAdminDeleteReceipt tcAdmin (grpId g) (receiptId receipt)
+        runClientExpectStatus env status404 $ cGetReceipt tcAlice (grpId g) (receiptId receipt),
+      testCase "admin can delete users" $ withTestAppWithBootstrap (Just $ AdminBootstrap "admin" "adminpass123") $ \env -> do
+        tokAdmin <- setupAdmin env "admin" "adminpass123"
+        tokAlice <- setupUser env "alice"
+        let tcAdmin = mkAdminTC tokAdmin
+            tcAlice = mkTC tokAlice
+        alice <- runClient env $ cGetMe tcAlice
+        _ <- runClient env $ cAdminDeleteUser tcAdmin (userId alice)
+        runClientExpectStatus env status404 $ cGetMe tcAlice,
+      testCase "admin bulk operations work" $ withTestAppWithBootstrap (Just $ AdminBootstrap "admin" "adminpass123") $ \env -> do
+        tokAdmin <- setupAdmin env "admin" "adminpass123"
+        tokAlice <- setupUser env "alice"
+        _ <- setupUser env "bob"
+        _ <- setupUser env "carol"
+        let tcAdmin = mkAdminTC tokAdmin
+            tcAlice = mkTC tokAlice
+        bobPage <- runClient env $ cAdminUsers tcAdmin (Just "bob") Nothing Nothing Nothing
+        carolPage <- runClient env $ cAdminUsers tcAdmin (Just "carol") Nothing Nothing Nothing
+        bobUser <- case pageItems bobPage of
+          [u] -> pure u
+          xs -> assertFailure ("Expected exactly one bob user, got: " <> show (length xs)) >> undefined
+        carolUser <- case pageItems carolPage of
+          [u] -> pure u
+          xs -> assertFailure ("Expected exactly one carol user, got: " <> show (length xs)) >> undefined
+        _ <- runClient env $ cAdminBulkDeleteUsers tcAdmin (BulkRequest [userId bobUser, userId carolUser])
+        usersAfterDelete <- runClient env $ cAdminUsers tcAdmin Nothing Nothing Nothing (Just "username")
+        assertEqual "users after bulk delete" ["alice"] (map userName $ pageItems usersAfterDelete)
+        g1 <- runClient env $ cCreateGroup tcAlice "Trip"
+        g2 <- runClient env $ cCreateGroup tcAlice "Work"
+        g3 <- runClient env $ cCreateGroup tcAlice "Archive"
+        _ <- runClient env $ cAdminBulkDeleteGroups tcAdmin (BulkRequest [grpId g2])
+        _ <- runClient env $ cAdminDeleteGroup tcAdmin (grpId g3)
+        groupsAfterDelete <- runClient env $ cAdminGroups tcAdmin Nothing Nothing Nothing (Just "groupName")
+        assertEqual "remaining groups" ["Trip"] (map grpName $ pageItems groupsAfterDelete)
+        _ <- runClient env $ cAdminCreateUser tcAdmin (AdminCreateUserRequest "dave" "password123")
+        _ <- runClient env $ cAdminBulkAddMembers tcAdmin (grpId g1) (BulkRequest [Username "dave"])
+        fetched1 <- runClient env $ cAdminGroup tcAdmin (grpId g1)
+        assertEqual "members after bulk add" ["alice", "dave"] (grpMemberNames fetched1)
+        _ <- runClient env $ cAdminBulkDeleteMembers tcAdmin (grpId g1) (BulkRequest [Username "dave"])
+        fetched2 <- runClient env $ cAdminGroup tcAdmin (grpId g1)
+        assertEqual "members after bulk delete" ["alice"] (grpMemberNames fetched2)
+        _ <- runClient env $ cAdminBulkAddMembers tcAdmin (grpId g1) (BulkRequest [Username "dave"])
+        expense <- runClient env $ cAddExpense tcAlice (grpId g1) (ExpenseRecordRequest "Dinner" 100.0 (Username "alice") (read "2025-06-01") [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "dave") 1])
+        transfer <- runClient env $ cAddTransfer tcAlice (grpId g1) (TransferRecordRequest 15.0 (Username "dave") (Username "alice") (read "2025-06-02"))
+        _ <- runClient env $ cAdminBulkDeleteRecords tcAdmin (grpId g1) (BulkRequest [extractRecordId expense, extractRecordId transfer])
+        recordsAfterDelete <- runClient env $ cAdminGroupRecords tcAdmin (grpId g1)
+        assertEqual "records after bulk delete" 0 (length recordsAfterDelete)
+        receipt <- runClient env $ cCreateReceipt tcAlice (grpId g1) (CreateReceiptRequest "Original" [ExpenseRecordRequest "Taxi" 60.0 (Username "alice") (read "2025-06-03") [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "dave") 1]])
+        _ <- runClient env $ cAdminBulkDeleteReceipts tcAdmin (grpId g1) (BulkRequest [receiptId receipt])
+        receiptsAfterDelete <- runClient env $ cAdminGroupReceipts tcAdmin (grpId g1)
+        assertEqual "receipts after bulk delete" 0 (length receiptsAfterDelete)
     ]
 
 -- User tests
@@ -305,8 +576,8 @@ groupTests =
         let tc = mkTC tok
         _ <- runClient env $ cCreateGroup tc "Trip1"
         _ <- runClient env $ cCreateGroup tc "Trip2"
-        gs <- runClient env $ cGetMyGroups tc
-        assertEqual "two groups" 2 (length gs)
+        gs <- runClient env $ withPagination (cGetMyGroups tc) defaultPaginationParams
+        assertEqual "two groups" 2 (length $ pageItems gs)
     ]
 
 -- Record tests
@@ -343,6 +614,7 @@ recordTests =
         _ <- setupUser env "bob"
         let tc = mkTC tok
         g <- runClient env $ cCreateGroup tc "Trip"
+        _ <- runClient env $ cAddMember tc (grpId g) (Username "bob")
         let req =
               TransferRecordRequest
                 { amount = 50.0,
@@ -362,6 +634,7 @@ recordTests =
         _ <- setupUser env "bob"
         let tc = mkTC tok
         g <- runClient env $ cCreateGroup tc "Trip"
+        _ <- runClient env $ cAddMember tc (grpId g) (Username "bob")
         let req =
               ExpenseRecordRequest
                 { title = "Lunch",
@@ -379,6 +652,7 @@ recordTests =
         _ <- setupUser env "bob"
         let tc = mkTC tok
         g <- runClient env $ cCreateGroup tc "Trip"
+        _ <- runClient env $ cAddMember tc (grpId g) (Username "bob")
         let req1 =
               ExpenseRecordRequest
                 { title = "Lunch",
@@ -396,8 +670,8 @@ recordTests =
                 }
         _ <- runClient env $ cAddExpense tc (grpId g) req1
         _ <- runClient env $ cAddTransfer tc (grpId g) req2
-        rs <- runClient env $ cGetRecords tc (grpId g)
-        assertEqual "two records" 2 (length rs),
+        rs <- runClient env $ withPagination1 (cGetRecords tc) (grpId g) defaultPaginationParams
+        assertEqual "two records" 2 (length $ pageItems rs),
       --
       testCase "transfer to self => 400" $ withTestApp $ \env -> do
         tok <- setupUser env "alice"
@@ -515,7 +789,7 @@ authorizationTests =
         let tcAlice = mkTC tokAlice
             tcBob = mkTC tokBob
         g <- runClient env $ cCreateGroup tcAlice "Trip"
-        runClientExpectStatus env status403 $ cGetRecords tcBob (grpId g),
+        runClientExpectStatus env status403 $ withPagination1 (cGetRecords tcBob) (grpId g) defaultPaginationParams,
       --
       testCase "non-member cannot view report => 403" $ withTestApp $ \env -> do
         tokAlice <- setupUser env "alice"
@@ -641,7 +915,11 @@ receiptTests =
               CreateReceiptRequest
                 { note = "Receipt 1",
                   records =
-                    [ ExpenseRecordRequest "Lunch" 50.0 (Username "alice") (read "2025-06-01")
+                    [ ExpenseRecordRequest
+                        "Lunch"
+                        50.0
+                        (Username "alice")
+                        (read "2025-06-01")
                         [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1]
                     ]
                 }
@@ -649,14 +927,18 @@ receiptTests =
               CreateReceiptRequest
                 { note = "Receipt 2",
                   records =
-                    [ ExpenseRecordRequest "Snacks" 15.0 (Username "bob") (read "2025-06-02")
+                    [ ExpenseRecordRequest
+                        "Snacks"
+                        15.0
+                        (Username "bob")
+                        (read "2025-06-02")
                         [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1]
                     ]
                 }
         _ <- runClient env $ cCreateReceipt tc (grpId g) req1
         _ <- runClient env $ cCreateReceipt tc (grpId g) req2
-        rs <- runClient env $ cGetReceipts tc (grpId g)
-        assertEqual "two receipts" 2 (length rs),
+        rs <- runClient env $ withPagination1 (cGetReceipts tc) (grpId g) defaultPaginationParams
+        assertEqual "two receipts" 2 (length $ pageItems rs),
       --
       testCase "get receipt by id" $ withTestApp $ \env -> do
         tok <- setupUser env "alice"
@@ -668,7 +950,11 @@ receiptTests =
               CreateReceiptRequest
                 { note = "Solo receipt",
                   records =
-                    [ ExpenseRecordRequest "Coffee" 5.0 (Username "alice") (read "2025-06-01")
+                    [ ExpenseRecordRequest
+                        "Coffee"
+                        5.0
+                        (Username "alice")
+                        (read "2025-06-01")
                         [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1]
                     ]
                 }
@@ -687,7 +973,11 @@ receiptTests =
               CreateReceiptRequest
                 { note = "To delete",
                   records =
-                    [ ExpenseRecordRequest "Item" 10.0 (Username "alice") (read "2025-06-01")
+                    [ ExpenseRecordRequest
+                        "Item"
+                        10.0
+                        (Username "alice")
+                        (read "2025-06-01")
                         [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1]
                     ]
                 }
@@ -710,7 +1000,11 @@ receiptTests =
               CreateReceiptRequest
                 { note = "Unauthorized",
                   records =
-                    [ ExpenseRecordRequest "Unauthorized item" 10.0 (Username "alice") (read "2025-06-01")
+                    [ ExpenseRecordRequest
+                        "Unauthorized item"
+                        10.0
+                        (Username "alice")
+                        (read "2025-06-01")
                         [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1]
                     ]
                 }
@@ -727,12 +1021,16 @@ receiptTests =
               CreateReceiptRequest
                 { note = "Via receipt",
                   records =
-                    [ ExpenseRecordRequest "Taxi" 25.0 (Username "alice") (read "2025-06-01")
+                    [ ExpenseRecordRequest
+                        "Taxi"
+                        25.0
+                        (Username "alice")
+                        (read "2025-06-01")
                         [RecordSplitRequest (Username "alice") 1, RecordSplitRequest (Username "bob") 1]
                     ]
                 }
         _ <- runClient env $ cCreateReceipt tc (grpId g) req
         -- The record should also appear in the group's record listing
-        rs <- runClient env $ cGetRecords tc (grpId g)
-        assertEqual "one record in group" 1 (length rs)
+        rs <- runClient env $ withPagination1 (cGetRecords tc) (grpId g) defaultPaginationParams
+        assertEqual "one record in group" 1 (length $ pageItems rs)
     ]

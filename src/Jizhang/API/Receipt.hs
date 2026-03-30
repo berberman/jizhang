@@ -7,7 +7,10 @@ module Jizhang.API.Receipt where
 
 import Control.Monad (forM, forM_)
 import Data.Coerce (coerce)
-import Data.UUID (toText)
+import Data.List (sortOn)
+import Data.Text (Text)
+import Data.UUID (UUID, toText)
+import Jizhang.API.Common
 import Jizhang.API.Types
 import Jizhang.API.Utils
 import qualified Jizhang.Database as D
@@ -19,7 +22,7 @@ type ReceiptAPI =
   -- Create a new receipt with batch records
   "groups" :> Capture "groupId" GroupId :> "receipts" :> ReqBody '[JSON] CreateReceiptRequest :> Post '[JSON] Receipt
     -- List all receipts in a group
-    :<|> "groups" :> Capture "groupId" GroupId :> "receipts" :> Get '[JSON] [Receipt]
+    :<|> "groups" :> Capture "groupId" GroupId :> "receipts" :> WithPagination (Get '[JSON] (PaginatedResponse Receipt))
     -- Get a specific receipt with its records
     :<|> "groups" :> Capture "groupId" GroupId :> "receipts" :> Capture "receiptId" ReceiptId :> Get '[JSON] Receipt
     -- Delete a receipt (records' receipt FK set to NULL)
@@ -34,6 +37,13 @@ receiptServer authUser =
     :<|> getReceipt authUser
     :<|> deleteReceipt authUser
     :<|> updateReceipt authUser
+
+getReceiptsByGroupId :: UUID -> MyHandler [Receipt]
+getReceiptsByGroupId gId = do
+  ensureGroupExists gId
+  receipts <- runDB $ D.getReceiptsForGroup gId
+  um <- getGroupUserMap gId
+  forM receipts $ \receipt -> buildReceiptResponse um receipt
 
 createReceipt :: AuthUser -> GroupId -> CreateReceiptRequest -> MyHandler Receipt
 createReceipt authUser (GroupId gId) CreateReceiptRequest {..} = do
@@ -72,14 +82,12 @@ createReceipt authUser (GroupId gId) CreateReceiptRequest {..} = do
         createdAt = S._receiptCreatedAt receipt
       }
 
-getReceipts :: AuthUser -> GroupId -> MyHandler [Receipt]
-getReceipts authUser (GroupId gId) = do
+getReceipts :: AuthUser -> GroupId -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> MyHandler (PaginatedResponse Receipt)
+getReceipts authUser (GroupId gId) mQuery mOffset mLimit mSort = do
   logInfo_ $ "Listing receipts in group " <> toText gId
-  ensureGroupExists gId
   ensureGroupMember (authUserId authUser) gId
-  receipts <- runDB $ D.getReceiptsForGroup gId
-  um <- getGroupUserMap gId
-  forM receipts $ \receipt -> buildReceiptResponse um receipt
+  receipts <- getReceiptsByGroupId gId
+  pure $ paginateResponse mOffset mLimit mQuery mSort sortReceipts $ filterReceipts mQuery receipts
 
 getReceipt :: AuthUser -> GroupId -> ReceiptId -> MyHandler Receipt
 getReceipt authUser (GroupId gId) (ReceiptId rId) = do
@@ -167,3 +175,14 @@ buildReceiptResponse um receipt = do
         records = apiRecords,
         createdAt = S._receiptCreatedAt receipt
       }
+
+filterReceipts :: Maybe Text -> [Receipt] -> [Receipt]
+filterReceipts Nothing = id
+filterReceipts (Just queryText) = filter (matchesQuery queryText . receiptNoteOf)
+
+sortReceipts :: [Receipt] -> Maybe Text -> [Receipt]
+sortReceipts receipts Nothing = sortOn receiptNoteOf receipts
+sortReceipts receipts (Just sortText) = applySort sortText receiptNoteOf receipts
+
+receiptNoteOf :: Receipt -> Text
+receiptNoteOf (Receipt _ _ _ note _ _) = note

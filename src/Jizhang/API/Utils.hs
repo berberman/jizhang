@@ -97,7 +97,8 @@ ensureGroupMemberByUsername gId u = do
     Just user -> do
       isMember <- runDB $ D.isUserInGroup (S._userId user) gId
       unless isMember $
-        throwError $ err400 {errBody = "User " <> textToLBS u <> " is not a member of the group"}
+        throwError $
+          err400 {errBody = "User " <> textToLBS u <> " is not a member of the group"}
 
 validateExpenseRecordRequest :: UUID -> ExpenseRecordRequest -> MyHandler ()
 validateExpenseRecordRequest gId ExpenseRecordRequest {..} = do

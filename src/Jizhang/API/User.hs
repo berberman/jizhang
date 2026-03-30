@@ -7,6 +7,10 @@ module Jizhang.API.User where
 
 import Control.Monad (forM)
 import Data.Coerce (coerce)
+import Data.List (sortOn)
+import Data.Text (Text)
+import Data.UUID (UUID)
+import Jizhang.API.Common
 import Jizhang.API.Types
 import Jizhang.API.Utils
 import qualified Jizhang.Database as D
@@ -27,7 +31,7 @@ type UserAPI =
     :<|> "users"
       :> "me"
       :> "groups"
-      :> Get '[JSON] [Group]
+      :> WithPagination (Get '[JSON] (PaginatedResponse Group))
 
 userServer :: AuthUser -> MyServer UserAPI
 userServer authUser =
@@ -47,9 +51,14 @@ deleteMe AuthUser {..} = do
   runDB $ D.deleteUser authUserId
   pure NoContent
 
-getMyGroups :: AuthUser -> MyHandler [Group]
-getMyGroups AuthUser {..} = do
+getMyGroups :: AuthUser -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> MyHandler (PaginatedResponse Group)
+getMyGroups AuthUser {..} mQuery mOffset mLimit mSort = do
   logInfo_ $ "Fetching groups for current user: " <> authUsername
+  groups <- getMyGroupsForUser authUserId
+  pure $ paginateResponse mOffset mLimit mQuery mSort sortGroups $ filterGroups mQuery groups
+
+getMyGroupsForUser :: UUID -> MyHandler [Group]
+getMyGroupsForUser authUserId = do
   groups <- runDB $ D.getGroupsForUser authUserId
   forM groups $ \g -> do
     let gid = S._groupId g
@@ -60,3 +69,14 @@ getMyGroups AuthUser {..} = do
 -- | Resolve group members to API Users using the user map
 resolveGroupMembers :: UserMap -> [S.GroupMember] -> [User]
 resolveGroupMembers um = map (\m -> resolveUser um (S.unUserId $ S._gmUser m))
+
+filterGroups :: Maybe Text -> [Group] -> [Group]
+filterGroups Nothing = id
+filterGroups (Just queryText) = filter (matchesQuery queryText . groupNameOf)
+
+sortGroups :: [Group] -> Maybe Text -> [Group]
+sortGroups groups Nothing = sortOn groupNameOf groups
+sortGroups groups (Just sortText) = applySort sortText groupNameOf groups
+
+groupNameOf :: Group -> Text
+groupNameOf (Group _ gname _ _) = gname

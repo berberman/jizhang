@@ -9,6 +9,8 @@
 
 module Jizhang.API.Types
   ( module Jizhang.API.Types.Auth,
+    module Jizhang.API.Types.Admin,
+    module Jizhang.API.Types.Common,
     module Jizhang.API.Types.Group,
     module Jizhang.API.Types.Receipt,
     module Jizhang.API.Types.Record,
@@ -30,7 +32,9 @@ import qualified Data.Text as T
 import Data.Time (getCurrentTime)
 import Database.Beam.Postgres (Pg, runBeamPostgresDebug)
 import Database.PostgreSQL.Simple (Connection)
+import Jizhang.API.Types.Admin
 import Jizhang.API.Types.Auth
+import Jizhang.API.Types.Common
 import Jizhang.API.Types.Group
 import Jizhang.API.Types.Receipt
 import Jizhang.API.Types.Record
@@ -45,7 +49,8 @@ import Servant.Auth.Server (JWTSettings)
 -- | Application environment available to all handlers
 data AppEnv = AppEnv
   { appConn :: !Connection,
-    appJWTSettings :: !JWTSettings
+    appJWTSettings :: !JWTSettings,
+    appAdminBootstrap :: !(Maybe AdminBootstrap)
   }
 
 type MyServer k = ServerT k MyHandler

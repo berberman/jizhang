@@ -44,6 +44,33 @@ deriving instance Show UserKey
 
 deriving instance Ord UserKey
 
+data AdminT f = Admin
+  { _adminId :: C f UUID,
+    _adminUsername :: C f Text,
+    _adminPasswordHash :: C f Text
+  }
+  deriving (Generic, Beamable)
+
+type Admin = AdminT Identity
+
+deriving instance Eq Admin
+
+deriving instance Show Admin
+
+deriving instance Ord Admin
+
+instance Table AdminT where
+  data PrimaryKey AdminT f = AdminId {unAdminId :: C f UUID} deriving (Generic, Beamable)
+  primaryKey = AdminId . _adminId
+
+type AdminKey = PrimaryKey AdminT Identity
+
+deriving instance Eq AdminKey
+
+deriving instance Show AdminKey
+
+deriving instance Ord AdminKey
+
 data GroupT f = Group
   { _groupId :: C f UUID,
     _groupName :: C f Text,
@@ -207,6 +234,7 @@ instance Table RecordSplitT where
 
 data JizhangDb f = JizhangDb
   { _users :: f (TableEntity UserT),
+    _admins :: f (TableEntity AdminT),
     _groups :: f (TableEntity GroupT),
     _groupMembers :: f (TableEntity GroupMemberT),
     _receipts :: f (TableEntity ReceiptT),
@@ -222,6 +250,9 @@ jizhangDb =
       { _users =
           setEntityName "users"
             <> modifyTableFields tableModification {_passwordHash = "password_hash"},
+        _admins =
+          setEntityName "admins"
+            <> modifyTableFields tableModification {_adminPasswordHash = "password_hash"},
         _groups =
           setEntityName "groups"
             <> modifyTableFields tableModification {_groupOwner = UserId "owner__id"},

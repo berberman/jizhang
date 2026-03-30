@@ -15,9 +15,9 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.UUID (toText)
+import Data.UUID (UUID, toText)
 import Jizhang.API.Group
-import Jizhang.API.Record (getRecordsInGroup)
+import Jizhang.API.Record (getRecordsByGroupId)
 import Jizhang.API.Types
 import Jizhang.API.Utils
 import Log.Class
@@ -31,18 +31,22 @@ reportServer authUser = settle
   where
     settle (GroupId gId) = do
       logInfo_ $ "Calculating settlement for group " <> toText gId
-      ensureGroupExists gId
       ensureGroupMember (authUserId authUser) gId
-      Group {members} <- getGroup $ coerce gId
-      records <- getRecordsInGroup authUser $ coerce gId
-      let balances = calculateBalance members records
-          settlements = calculateSettlement balances
-      pure
-        Report
-          { groupId = coerce gId,
-            balances = M.elems balances,
-            settlements = settlements
-          }
+      getReportByGroupId gId
+
+getReportByGroupId :: UUID -> MyHandler Report
+getReportByGroupId gId = do
+  ensureGroupExists gId
+  Group {members} <- getGroup $ coerce gId
+  records <- getRecordsByGroupId gId
+  let balances = calculateBalance members records
+      settlements = calculateSettlement balances
+  pure
+    Report
+      { groupId = coerce gId,
+        balances = M.elems balances,
+        settlements = settlements
+      }
 
 -- Records should be in the same group
 calculateBalance :: [User] -> [Record] -> Map User Balance

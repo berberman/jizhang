@@ -7,7 +7,10 @@ module Jizhang.API where
 
 import Control.Monad.Reader (ReaderT (..))
 import Data.Swagger (Swagger)
+import Jizhang.API.Admin
+import Jizhang.API.AdminAuth
 import Jizhang.API.Auth
+import Jizhang.API.Common ()
 import Jizhang.API.Group
 import Jizhang.API.Import
 import Jizhang.API.Receipt
@@ -37,25 +40,32 @@ type JizhangAPI = UserAPI :<|> GroupAPI :<|> RecordAPI :<|> ReportAPI :<|> Impor
 
 type ProtectedAPI = Auth '[JWT] AuthUser :> JizhangAPI
 
-type API = AuthAPI :<|> ProtectedAPI :<|> SwaggerAPI
+type ProtectedAdminAPI = Auth '[JWT] AuthAdmin :> AdminAPI
+
+type API = AuthAPI :<|> AdminAuthAPI :<|> ProtectedAPI :<|> ProtectedAdminAPI :<|> SwaggerAPI
 
 swaggerServer :: MyServer SwaggerAPI
-swaggerServer = pure $ toSwagger (Proxy :: Proxy (AuthAPI :<|> ProtectedAPI))
+swaggerServer = pure $ toSwagger (Proxy :: Proxy (AuthAPI :<|> AdminAuthAPI :<|> ProtectedAPI :<|> ProtectedAdminAPI))
 
 protectedServer :: AuthResult AuthUser -> ServerT JizhangAPI MyHandler
 protectedServer (Authenticated authUser) = jizhangServer authUser
 protectedServer _ = throwAll err401
 
+protectedAdminServer :: AuthResult AuthAdmin -> ServerT AdminAPI MyHandler
+protectedAdminServer (Authenticated authAdmin) = adminServer authAdmin
+protectedAdminServer _ = throwAll err401
+
 api :: Proxy API
 api = Proxy
 
 server :: ServerT API MyHandler
-server = authServer :<|> protectedServer :<|> swaggerServer
+server = authServer :<|> adminAuthServer :<|> protectedServer :<|> protectedAdminServer :<|> swaggerServer
 
 type AppContext = '[CookieSettings, JWTSettings]
 
 app :: AppEnv -> LogT IO Application
 app appEnv = do
+  bootstrapAdmin appEnv
   env <- getLoggerEnv
   let jwtCfg = appJWTSettings appEnv
       cookieCfg = defaultCookieSettings

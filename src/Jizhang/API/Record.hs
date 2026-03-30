@@ -10,7 +10,9 @@ import Data.Coerce (coerce)
 import Data.List (sortOn)
 import qualified Data.Map.Strict as M
 import Data.Maybe (maybeToList)
-import Data.UUID (toText)
+import Data.Text (Text)
+import Data.UUID (UUID, toText)
+import Jizhang.API.Common
 import Jizhang.API.Types
 import Jizhang.API.Utils
 import qualified Jizhang.Database as D
@@ -26,7 +28,7 @@ type RecordAPI =
     -- Get a specific record
     :<|> "groups" :> Capture "groupId" GroupId :> "records" :> Capture "recordId" RecordId :> Get '[JSON] Record
     -- Get all records in a group
-    :<|> "groups" :> Capture "groupId" GroupId :> "records" :> Get '[JSON] [Record]
+    :<|> "groups" :> Capture "groupId" GroupId :> "records" :> WithPagination (Get '[JSON] (PaginatedResponse Record))
     -- Delete a specific record
     :<|> "groups" :> Capture "groupId" GroupId :> "records" :> Capture "recordId" RecordId :> Delete '[JSON] NoContent
     -- Update a specific transfer record
@@ -43,6 +45,17 @@ recordServer authUser =
     :<|> deleteRecord authUser
     :<|> updateTransfer authUser
     :<|> updateExpense authUser
+
+getRecordsByGroupId :: UUID -> MyHandler [Record]
+getRecordsByGroupId gId = do
+  ensureGroupExists gId
+  rs <- runDB $ D.getRecordsWithSplitsForGroup gId
+  um <- getGroupUserMap gId
+  let mp = M.fromListWith (++) [(r, maybeToList s) | (r, s) <- rs]
+  pure $
+    map (\(r, ss) -> if S.isTransferRecord r then recordToTransferRecord um r else recordToExpenseRecord um r ss) $
+      sortOn (S._createdAt . fst) $
+        M.toList mp
 
 addExpenseRecord :: AuthUser -> GroupId -> ExpenseRecordRequest -> MyHandler Record
 addExpenseRecord authUser (GroupId gId) req@ExpenseRecordRequest {..} = do
@@ -87,18 +100,12 @@ getRecord authUser (GroupId gId) (RecordId rId) = do
       then recordToTransferRecord um record
       else recordToExpenseRecord um record ssplits
 
-getRecordsInGroup :: AuthUser -> GroupId -> MyHandler [Record]
-getRecordsInGroup authUser (GroupId gId) = do
+getRecordsInGroup :: AuthUser -> GroupId -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> MyHandler (PaginatedResponse Record)
+getRecordsInGroup authUser (GroupId gId) mQuery mOffset mLimit mSort = do
   logInfo_ $ "Fetching all records in group " <> toText gId
-  ensureGroupExists gId
   ensureGroupMember (authUserId authUser) gId
-  rs <- runDB $ D.getRecordsWithSplitsForGroup gId
-  um <- getGroupUserMap gId
-  let mp = M.fromListWith (++) [(r, maybeToList s) | (r, s) <- rs]
-  pure $
-    map (\(r, ss) -> if S.isTransferRecord r then recordToTransferRecord um r else recordToExpenseRecord um r ss) $
-      sortOn (S._createdAt . fst) $
-        M.toList mp
+  records <- getRecordsByGroupId gId
+  pure $ paginateResponse mOffset mLimit mQuery mSort sortRecords $ filterRecords mQuery records
 
 deleteRecord :: AuthUser -> GroupId -> RecordId -> MyHandler NoContent
 deleteRecord authUser (GroupId gId) (RecordId rId) = do
@@ -143,3 +150,15 @@ updateExpense authUser (GroupId gId) (RecordId rId) req@ExpenseRecordRequest {..
           D.insertRecordSplit (coerce rid) uid sh
       getRecord authUser (GroupId gId) (RecordId rId)
     _ -> throwError $ err400 {errBody = "Record is not an expense record"}
+
+filterRecords :: Maybe Text -> [Record] -> [Record]
+filterRecords Nothing = id
+filterRecords (Just queryText) = filter (matchesQuery queryText . recordTitleOf)
+
+sortRecords :: [Record] -> Maybe Text -> [Record]
+sortRecords records Nothing = sortOn recordTitleOf records
+sortRecords records (Just sortText) = applySort sortText recordTitleOf records
+
+recordTitleOf :: Record -> Text
+recordTitleOf (ExpenseRecord _ title _ _ _ _ _ _) = title
+recordTitleOf (TransferRecord _ title _ _ _ _ _ _) = title

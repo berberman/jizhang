@@ -37,6 +37,9 @@ getUserById uid = runSelectReturningOne $ select $ do
   guard_ (_userId user ==. val_ uid)
   pure user
 
+getAllUsers :: Pg [User]
+getAllUsers = runSelectReturningList $ select $ all_ (_users jizhangDb)
+
 -- | Get a map from user UUID to username for resolving FKs
 getAllUsersMap :: Pg (M.Map UUID Username)
 getAllUsersMap = do

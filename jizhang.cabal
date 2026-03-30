@@ -29,6 +29,12 @@ library
     Paths_jizhang
   exposed-modules:
     Jizhang.API
+    Jizhang.API.Admin
+    Jizhang.API.Admin.Common
+    Jizhang.API.Admin.Groups
+    Jizhang.API.Admin.Users
+    Jizhang.API.AdminAuth
+    Jizhang.API.Common
     Jizhang.API.Auth
     Jizhang.API.Group
     Jizhang.API.Import
@@ -36,7 +42,9 @@ library
     Jizhang.API.Record
     Jizhang.API.Report
     Jizhang.API.Types
+    Jizhang.API.Types.Admin
     Jizhang.API.Types.Auth
+    Jizhang.API.Types.Common
     Jizhang.API.Types.Group
     Jizhang.API.Types.Receipt
     Jizhang.API.Types.Record
@@ -45,6 +53,7 @@ library
     Jizhang.API.User
     Jizhang.API.Utils
     Jizhang.Database
+    Jizhang.Database.Admin
     Jizhang.Database.Group
     Jizhang.Database.Init
     Jizhang.Database.Receipt
@@ -54,7 +63,7 @@ library
 
   build-depends:
     , aeson
-    , bcrypt
+     , bcrypt
     , beam-core             ^>=0.10.4
     , beam-postgres         ^>=0.5.4
     , bytestring
@@ -69,11 +78,11 @@ library
     , servant-auth
     , servant-auth-server
     , servant-auth-swagger
-    , servant-server
-    , servant-swagger
-    , swagger2
-    , text
-    , time
+     , servant-server
+      , servant-swagger
+      , swagger2
+      , text
+      , time
     , transformers
     , transformers-base
     , uuid
@@ -86,12 +95,14 @@ executable jizhang
   main-is:        Main.hs
   hs-source-dirs: app
   build-depends:
-    , bytestring
-    , jizhang
-    , log-base             ^>=0.12.1
-    , postgresql-simple
-    , servant-auth-server
-    , warp
+     , bytestring
+     , containers
+     , jizhang
+     , log-base             ^>=0.12.1
+     , postgresql-simple
+     , servant-auth-server
+     , text
+     , warp
 
 test-suite jizhang-tests
   import:         opts
@@ -115,11 +126,11 @@ test-suite jizhang-tests
     , servant-auth-client
     , servant-auth-server
     , servant-client
-    , servant-client-core
-    , servant-server
-    , tasty
-    , tasty-hunit
-    , text
-    , time
-    , uuid
-    , warp
+      , servant-client-core
+      , servant-server
+      , tasty
+      , tasty-hunit
+      , text
+      , time
+      , uuid
+      , warp

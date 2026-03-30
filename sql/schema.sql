@@ -4,6 +4,12 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS admins (
+  id UUID PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS groups (
   id UUID PRIMARY KEY,
   name TEXT NOT NULL,
