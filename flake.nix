@@ -1,40 +1,46 @@
 {
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
+  inputs.flake-utils.url = "github:numtide/flake-utils";
   outputs =
-    { self, nixpkgs }:
-    let
-      pkgs = import nixpkgs {
-        system = "x86_64-linux";
-        overlays = [ self.overlay ];
-        config = {
-          allowBroken = true;
-        };
-      };
-    in
-    with pkgs;
     {
-      overlay =
-        self: super:
-        let
-          hpkgs = super.haskellPackages.override {
-            overrides = hself: hsuper: {
-            };
-          };
-          jizhang = hpkgs.callCabal2nix "jizhang" ./. { };
-        in
-        with super;
-        with haskell.lib;
-        {
-          inherit jizhang;
-          jizhang-dev = addBuildTools jizhang [
+      self,
+      nixpkgs,
+      flake-utils,
+      ...
+    }:
+    with flake-utils.lib;
+    eachDefaultSystem (
+      system:
+      let
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ self.overlays.default ];
+        };
+      in
+      with pkgs;
+      {
+        packages.default = haskellPackages.jizhang;
+        packages.jizhang = haskellPackages.jizhang;
+        devShells.default =
+          with haskell.lib;
+          (addBuildTools (haskellPackages.jizhang) [
             cabal-install
             haskell-language-server
             postgresql
             typescript-language-server
-          ];
-        };
-      defaultPackage.x86_64-linux = jizhang;
-      devShell.x86_64-linux = jizhang-dev.envFunc { };
+          ]).envFunc
+            { };
+      }
+    )
+    // {
+      overlays.default = final: prev: {
+        haskellPackages = prev.haskellPackages.override (old: {
+          overrides = final.lib.composeExtensions (old.overrides or (_: _: { })) (
+            hself: hsuper: {
+              jizhang = hself.callCabal2nix "jizhang" ./. { };
+            }
+          );
+        });
+      };
     };
 }
