@@ -1,5 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Operator account storage, separate from user sessions and identities.
+-- Password hashing, authorization and transaction ownership remain with callers.
 module Jizhang.Database.Admin where
 
 import Data.Text (Text)
@@ -11,6 +13,8 @@ import qualified Database.PostgreSQL.Simple as PG
 import Database.PostgreSQL.Simple.Types (Only (..))
 import Jizhang.Database.Schema
 
+-- | Insert a new operator with an already-derived password hash.
+-- Duplicate usernames fail at the database rather than replacing credentials.
 insertAdmin :: Text -> Text -> Pg Admin
 insertAdmin username passwordHash = do
   newUUID <- liftIO nextRandom
@@ -32,6 +36,8 @@ getAdminById adminId = runSelectReturningOne $ select $ do
 getAllAdmins :: Pg [Admin]
 getAllAdmins = runSelectReturningList $ select $ all_ (_admins jizhangDb)
 
+-- | Bootstrap a missing username without rotating an existing operator's hash.
+-- The read/insert pair is not an upsert; callers must serialize concurrent bootstrap.
 ensureAdminExists :: PG.Connection -> Text -> Text -> IO ()
 ensureAdminExists conn username passwordHash = do
   existing <- PG.query conn "SELECT id FROM admins WHERE username = ?" (Only username) :: IO [Only UUID]

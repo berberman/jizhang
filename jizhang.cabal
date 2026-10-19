@@ -14,7 +14,11 @@ build-type:      Simple
 extra-doc-files: CHANGELOG.md
 data-files:
   sql/*.sql
-  ui/*
+  ui/*.html
+  ui/*.js
+  ui/*.css
+  data/currencies.json
+  client/web/jizhang-mark.svg
 
 common opts
   ghc-options:      -Wall
@@ -28,9 +32,19 @@ library
     Paths_jizhang
   other-modules:
     Paths_jizhang
+    Jizhang.API.Internal.Error
+    Jizhang.API.Internal.Resource
+    Jizhang.API.User.Account
+    Jizhang.API.User.Projection
+    Jizhang.API.Group.Projection
+    Jizhang.API.Record.Input
+    Jizhang.API.Record.Projection
+    Jizhang.API.Record.Service
   exposed-modules:
     Jizhang.API
+    Jizhang.API.App
     Jizhang.API.Admin
+    Jizhang.API.Admin.Authentication
     Jizhang.API.Admin.Common
     Jizhang.API.Admin.Groups
     Jizhang.API.Admin.Users
@@ -42,20 +56,47 @@ library
     Jizhang.API.GroupImport
     Jizhang.API.Receipt
     Jizhang.API.Record
+    Jizhang.API.AccountAuthentication
+    Jizhang.API.Invitation
+    Jizhang.API.Logout
+    Jizhang.API.OIDC
     Jizhang.API.Report
+    Jizhang.API.RequestProtection
+    Jizhang.API.Statistics
+    Jizhang.API.ExchangeRate
     Jizhang.API.Types
     Jizhang.API.Types.Admin
     Jizhang.API.Types.Auth
     Jizhang.API.Types.Common
     Jizhang.API.Types.Group
+    Jizhang.API.Types.ExchangeRate
+    Jizhang.API.Types.Money
     Jizhang.API.Types.Receipt
     Jizhang.API.Types.Record
     Jizhang.API.Types.Report
+    Jizhang.API.Types.Statistics
     Jizhang.API.Types.User
+    Jizhang.API.Types.OIDC
     Jizhang.API.User
-    Jizhang.API.Utils
+    Jizhang.Currency
+    Jizhang.Config
+    Jizhang.Money
+    Jizhang.RecordQuery
+    Jizhang.RequestProtection
+    Jizhang.ExchangeRate
+    Jizhang.Report.Balance
+    Jizhang.Report.Statistics
+    Jizhang.Report.Markdown
+    Jizhang.OIDC
+    Jizhang.Auth.Session
+    Jizhang.Auth.Context
+    Jizhang.Auth.Security
     Jizhang.Database
     Jizhang.Database.Admin
+    Jizhang.Database.Auth
+    Jizhang.Database.AdminAuthentication
+    Jizhang.Database.Connection
+    Jizhang.Database.ExchangeRate
     Jizhang.Database.Group
     Jizhang.Database.Init
     Jizhang.Database.Receipt
@@ -65,19 +106,35 @@ library
 
   build-depends:
     , aeson
+    , base64-bytestring
+    , crypton
+    , memory
+    , network-uri
+    , iproute >=1.7 && <1.8
+    , network
+    , oidc-client ==0.8.0.0
+    , jose
+    , lens
+    , jose-jwt ==0.10.0
      , bcrypt
     , beam-core             ^>=0.10.4
     , beam-postgres         ^>=0.5.4
     , bytestring
+    , email-validate >=2.3 && <2.4
      , cassava
      , containers
      , cookie
      , filepath
      , http-media
+     , http-client
+     , http-client-tls
+     , http-types
     , log-base              ^>=0.12.1
     , monad-control
     , mtl
-    , postgresql-simple
+    , postgresql-simple     ^>=0.7.0.1
+    , postgresql-libpq      ^>=0.11.0.0
+    , scientific
     , servant
     , servant-auth
     , servant-auth-server
@@ -91,21 +148,27 @@ library
     , transformers-base
     , uuid
     , wai
+    , wai-cors              ^>=0.2.7
     , wai-log
     , warp
 
 executable jizhang
   import:         opts
   main-is:        Main.hs
+  ghc-options:    -threaded
   hs-source-dirs: app
   build-depends:
+     , beam-postgres
      , bytestring
      , containers
+     , http-client
+     , http-client-tls
      , jizhang
      , log-base             ^>=0.12.1
      , postgresql-simple
      , servant-auth-server
      , text
+     , unix
      , warp
 
 test-suite jizhang-tests
@@ -114,18 +177,47 @@ test-suite jizhang-tests
   main-is:        Main.hs
   other-modules:
     APITest
+    RequestProtectionTest
+    RequestProtectionCredentialTest
+    CurrencyTest
+    ConfigTest
+    DatabaseRecoveryTest
+    ExchangeRateTest
+    ExchangeQuoteTest
+    MoneyTest
     ReportTest
+    RecordQueryTest
+    StatisticsTest
+    OIDCProvider
+    OIDCTest
+    OIDCDtoTest
+    AuthLogTest
+    AuthSessionTest
+    OIDCFlowTest
+    AuthAccountTest
+    LogoutTest
+    AdminAuthenticationTest
+    EnvironmentAuthenticationTest
     Utils
 
   hs-source-dirs: test
   build-depends:
+    , aeson
     , bytestring
     , containers
+    , base64-bytestring
+    , jose
+    , jose-jwt ==0.10.0
+    , wai
+    , iproute >=1.7 && <1.8
+    , network
+    , network-uri
     , http-client
     , http-types
     , jizhang
     , log-base             ^>=0.12.1
     , postgresql-simple
+    , scientific
     , servant-auth
     , servant-auth-client
     , servant-auth-server

@@ -1,0 +1,68 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Haskell build and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: jizhang_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d jizhang_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: host=127.0.0.1 port=55432 user=postgres password=postgres dbname=jizhang_test
+    steps:
+      - uses: actions/checkout@v6 # v6
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@v31.11.2
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Update Cabal package index
+        run: nix develop .#backend --no-write-lock-file --command cabal update
+      - name: Build
+        run: nix develop .#backend --no-write-lock-file --command cabal build all --enable-tests
+      - name: Test
+        run: nix develop .#backend --no-write-lock-file --command cabal test jizhang-tests --test-options='--num-threads=1' --test-show-details=direct
+
+  flutter:
+    name: Flutter tests and web build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@v31.11.2
+        with:
+          github_access_token: ${{ github.token }}
+      - name: Install dependencies
+        run: nix develop .. --no-write-lock-file --command flutter pub get
+      - name: Test
+        run: nix develop .. --no-write-lock-file --command flutter test
+      - name: Build web
+        run: nix develop .. --no-write-lock-file --command flutter build web --dart-define=API_BASE_URL=http://127.0.0.1:8080

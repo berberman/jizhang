@@ -1,65 +1,128 @@
 # AGENTS.md
-Guidance for coding agents working in this repository.
-This is based on the actual repo layout, Cabal config, source files, and tests.
 
-## Repo Snapshot
-- Language: Haskell2010 (`jizhang.cabal`)
-- Build tool: Cabal
-- Dev shell: Nix flake (`flake.nix`)
-- App shape: Servant API + Beam/Postgres + JWT auth + Tasty tests
-- Library code: `src/Jizhang/**`
-- Executable entrypoint: `app/Main.hs`
-- Tests: `test/*.hs`, runner in `test/Main.hs`
+Guidance for coding agents working in this repository. Keep public examples
+synthetic (for example Alice/Bob); never publish real member mappings, source
+worksheets, private network addresses, credentials, or local dataset totals.
+Author/license attribution is not a group-membership claim and must be retained.
+Keep public docs free of execution diaries, machine-specific endpoints,
+credentials, test-count receipts, and temporary troubleshooting narratives.
+All `.local/` content is ignored: runtime state belongs in `.local/jizhang/`,
+private material and agent execution notes in `.local/private/`.
 
-## Rule Files Present
-- `AGENTS.md`: present
-- `.cursorrules`: not present
-- `.cursor/rules/`: not present
-- `.github/copilot-instructions.md`: not present
-Do not assume hidden editor-specific rules beyond this file.
+## Repository and environment
 
-## Setup Notes
-Preferred environment: `nix develop`
-Why: provides `cabal-install`, `haskell-language-server`, and `postgresql`.
-Environment variables used by the app/tests:
-- `DATABASE_URL` in `app/Main.hs`
-- `TEST_DATABASE_URL` in `test/APITest.hs`
-Defaults if unset:
-- app DB: `host=localhost dbname=jizhang`
-- test DB: `dbname=jizhang_test`
-Tests expect PostgreSQL to be available.
+- Haskell2010 / Cabal: `src/Jizhang/**`, executable `app/Main.hs`, tests `test/*.hs`.
+- Flutter client: `client/lib`, behavior/model tests `client/test`.
+- Same-origin admin console: `ui` (plain JavaScript/CSS, served by the API).
+- Schema source: `Jizhang.Database.Init` loads packaged `sql/schema.sql`; Beam
+  mappings live in `Jizhang.Database.Schema`. Packaged UI/SQL paths require the
+  normal Cabal launch environment.
+- Local full-stack entry: `scripts/run-local.py`; public overview: `README.md`.
+  Manual setup and verification: `docs/development.md`; deployment:
+  `docs/deployment.md`; Flutter-specific development: `client/README.md`.
+- `flake.lock` pins the default shell: `nix develop --no-write-lock-file` includes
+  Flutter, matching Dart, PostgreSQL, Cabal, and Haskell tooling. The explicit
+  `nix develop .#backend` shell omits Flutter. Neither starts services.
+- The launcher defaults HTTP to `127.0.0.1` and preserves `.local/jizhang/`;
+  explicit `JIZHANG_HOST` overrides are for operator-configured trusted testing.
+  Direct backend launches use `BIND_HOST` (unset retains Warp's default).
 
-## Build Commands
-Primary build: `cabal build`
-Useful targeted builds:
-- `cabal build lib:jizhang`
-- `cabal build exe:jizhang`
-- `cabal build test:jizhang-tests`
-- `nix build`
-Run the server: `cabal run jizhang`
-Notes:
-- There is no Stack config; prefer Cabal.
-- `jizhang.cabal` enables `-Wall` globally.
-- Treat warnings as meaningful even though `-Werror` is not enabled.
+## Shared financial and frontend contracts
 
-## Test Commands
-Run everything:
-- `cabal test`
-- `cabal test jizhang-tests`
-Build tests without running:
-- `cabal build test:jizhang-tests`
-Run a single test or subset with Tasty patterns:
-- `cabal test jizhang-tests --test-options="--pattern 'Report'"`
-- `cabal test jizhang-tests --test-options="--pattern 'calculateBalance'"`
-- `cabal test jizhang-tests --test-options="--pattern 'Auth / register and login'"`
-Pattern source of truth:
-- top-level groups in `test/Main.hs`
-- API integration groups/cases in `test/APITest.hs`
-- pure report tests in `test/ReportTest.hs`
-Important test behavior:
-- `test/APITest.hs` boots a real Warp app
-- integration tests create/drop Postgres tables
-- report tests are pure and cheaper than API tests
+Both Flutter and the admin console consume the same API. Keep their models,
+editors, validation, error behavior, and fixtures consistent when contracts change.
+Render user text literally; do not interpret it as HTML or Markdown. Preserve
+UUID-backed selections, historical identities, pending guards, dirty drafts, and
+failed-save input. Normal bearer accounts and cookie-authenticated admin accounts
+are separate; public identities must not expose private email.
+
+Money uses Haskell integers and Dart/JavaScript `BigInt`, with decimal-string API
+minor amounts and catalog-defined currency precision. Never route money through
+floating point or JavaScript `Number`. Preserve exact original/settlement amounts,
+persisted split allocations, and saved exchange-rate provenance. Never recompute
+saved allocations from current rates. Keep currencies separate in reports and
+suggested payments. Receipts and five-column CSV imports remain expense-only;
+income and transfers have distinct financial semantics.
+
+### Record notes and queries
+
+Record notes are nullable plain text for every kind, independent of receipt notes.
+Requests may omit `note`; responses require the field as text or null. Full PUT
+omission/null/blank clears it; preserve exact nonblank Unicode and newlines,
+reject NUL before SQL, and retain notes on unrelated edits. Startup adds the
+nullable column to the current schema without resetting rows or allocations.
+Five-column CSV remains unchanged and supplies null record notes.
+
+Both record endpoints use `Jizhang.RecordQuery` over the whole authorized ledger.
+Admin records are server-paginated; scoped detail GET drives report/Stats actions.
+
+- Record queries must be evaluated once on the server over the complete authorized
+  group before pagination, consistently for both frontends. Terms combine with
+  AND; quoting/escapes and qualifiers must reject malformed input, not broaden it.
+  Never search private email. Identity selections serialize immutable UUIDs.
+- Query qualifiers cover title, note, type, payer, payee, member, transaction date,
+  UTC created day, original currency, and exact original amount. Amount comparisons
+  require one unambiguous currency and catalog precision; do not convert currencies.
+- Record sorting defaults to descending transaction date, uses UUID-ascending
+  ties independent of direction, and groups amount sorting by currency. Do not
+  silently reuse generic list sorting or filter only a loaded page.
+- Preserve raw draft query separately from applied results; inline errors retain
+  editable input and clearly label previous results. Scope caches to group/session.
+
+### Balance reports
+
+Extend the existing all-time report fold, never reconstruct role totals from
+paginated records or dated statistics. `Balance` requires six nonnegative exact
+role totals; net reconciles as paid − share − income received + entitlement +
+sent − received. Breakdown merges impacts per record without doubling saved
+gross amount, retains zero impacts, and sorts date descending / UUID ascending.
+Flutter report decoding is strict; update all report fixtures on contract changes.
+Member sorting is exact and local, with UUID-ascending ties in either direction.
+Retain currency, sort and expanded currency+UUID state; suggested payments stay
+server-ordered and review-only. No database changes are required for role totals.
+
+### Statistics presentation
+
+Keep the backend's top-five allocated-expense order and exact Other remainder;
+do not invent categories or recompute saved allocations. Percentages truncate
+integer basis points; only bounded display ratios convert to floating point.
+Other and total never have record actions. Zero share has no dummy expense bar;
+group income/net stay visible and payments remain excluded.
+Flutter uses `_SpendingDataTable`; admin uses semantic scoped column headers.
+All time buckets and members belong in tables, independent of chart truncation.
+Keep table-local horizontal scrolling and separate disclosure/scroll/text
+PageStorage keys. Scoped expense actions must remain keyboard reachable.
+
+
+## Build and verification
+
+From the default pinned shell:
+
+```sh
+cabal build
+# Point this at a separately created disposable database named jizhang_test.
+export TEST_DATABASE_URL='host=127.0.0.1 port=55432 user=postgres dbname=jizhang_test'
+cabal test jizhang-tests --test-options='--num-threads=1'
+cd client
+flutter pub get
+flutter test
+flutter build web --dart-define=API_BASE_URL=http://127.0.0.1:8080
+```
+
+API integration tests start real Warp servers and drop/create PostgreSQL tables.
+Run them serially (`--num-threads=1`) on **`jizhang_test` only**, never the launcher
+app database or unrelated user data. The app's `DATABASE_URL` and tests'
+`TEST_DATABASE_URL` are separate; do not rely on defaults for destructive runs.
+Use the disposable-cluster instructions in `docs/development.md`. Tasty group/case
+names in `test/Main.hs` and the relevant test file are the source of truth for
+narrow `--pattern` selections; do not copy obsolete patterns.
+
+After contract integration, run the affected commands, then exercise the real
+application. Web changes require actual-browser inspection of both Flutter and
+admin surfaces, including mobile widths, keyboard interaction, and enlarged
+text. A unit test or successful build is not visual proof. Report only observed
+verification and blockers; do not claim native-platform coverage from a web run.
+Do not reset persistent local data to make verification pass.
 
 ## Lint / Formatting
 No dedicated formatter or linter config is checked in.
@@ -132,7 +195,7 @@ Two type worlds matter here:
 - The standard execution model is `AppEnv` + `MyHandler` + `LogT`.
 - `runDB` already logs SQL through `runBeamPostgresDebug`; do not add duplicate DB tracing casually.
 - Keep table naming compatible with the mappings in `jizhangDb`.
-- Tables are created with raw SQL in `app/Main.hs` and test setup, not migrations.
+- `Jizhang.Database.Init.createTables` executes packaged `sql/schema.sql` at startup and in test setup; update that SQL and Beam mappings together. Do not assume a general migration system.
 - SQL names are snake_case, with some FK columns like `owner__id` and `uploaded_by__id`.
 - Haskell Beam fields remain underscored camelCase.
 - Keep Beam queries inside `Jizhang.Database.*` when possible rather than pushing them into handlers.
@@ -145,7 +208,7 @@ Two type worlds matter here:
 - Tests use `tasty` and `tasty-hunit`.
 - Use `testGroup` with readable names.
 - Prefer descriptive behavior-style test names.
-- Reuse helpers such as `withTestApp`, `runClient`, `runClientExpectStatus`, and `assertApproxEqual`.
+- Reuse helpers such as `withTestAppServer`, `setupUser`, `fixtureUserId`, `runClient`, `runClientExpectStatus`, and `identityRequest`.
 - If behavior changes at the API layer, update the relevant tests in `test/APITest.hs` or `test/ReportTest.hs`.
 
 ## Change Strategy
@@ -154,19 +217,22 @@ Two type worlds matter here:
 - Extend existing helpers before copying logic.
 - Match the touched file's pragma/import/layout style.
 - Avoid broad cleanups unless explicitly requested.
+- README files are user/operator setup guides; CHANGELOG records externally
+  observable unreleased/released behavior. Per-run evidence and plans stay local.
 
-## Files and Artifacts to Avoid Committing
-From `.gitignore`:
-- `dist-newstyle`
-- `cabal.project.local`
-- `result`
-- `result-bin`
-- `links`
-- `jizhang.db`
+## Private and generated files
 
-## Verification Order
-Prefer this sequence before finishing:
-1. `cabal build`
-2. the narrowest relevant `cabal test ... --test-options="--pattern '...'"`
-3. `cabal test` if shared/auth/DB behavior changed
-4. Always run tests after making changes. If the relevant tests cannot pass because of pre-existing failures or environment issues, still run the narrowest relevant test command and report the blocker explicitly.
+Root ignore rules cover all `.local/`, `.env`/`.env.*` (except a public
+`.env.example`), `.DS_Store`, Python caches, Cabal outputs, and local build
+configuration. Runtime state belongs in `.local/jizhang/`; private material and
+agent execution notes belong in `.local/private/`. Keep private material
+owner-only (directory 0700, files 0600); do not print its values in logs, tests,
+or review output. Keep the persistent launcher workspace and unrelated user
+changes intact. Keep this public `AGENTS.md` tracked; never add case-specific
+local paths, member data, or session artifacts to it.
+
+Retain the client ignore rules for Flutter/Dart/build/cache/IDE artifacts. Keep
+intentional `client/pubspec.lock`, Flutter `.metadata`, and generic
+`.vscode/settings.json`; do not delete them as a cleanup shortcut. Never stage
+all files blindly. Scan publishable tracked and untracked text when cleaning
+privacy-sensitive content; ignored local material is not publication input.

@@ -1,0 +1,11 @@
+{
+  "name": "Jizhang",
+  "short_name": "Jizhang",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#F5F7FA",
+  "theme_color": "#0F766E",
+  "description": "Shared expenses, receipts, and settlements.",
+  "prefer_related_applications": false,
+  "icons": [{"src":"jizhang-mark.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}]
+}

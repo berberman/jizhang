@@ -1,40 +1,42 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Jizhang.API.Record where
+-- | Member-authorized ledger routes. Record IDs are resolved within the captured
+-- group, and financial mutations validate requests before locking currency policy.
+module Jizhang.API.Record (RecordAPI, recordServer) where
 
-import Control.Monad (forM, forM_)
+import Control.Monad.Reader (asks)
 import Data.Coerce (coerce)
-import Data.List (sortOn)
-import qualified Data.Map.Strict as M
-import Data.Maybe (maybeToList)
 import Data.Text (Text)
-import Data.UUID (UUID, toText)
+import Data.UUID (toText)
+import Jizhang.API.App
+import Jizhang.API.Internal.Error (fetchOrFail, fromStoredData, textToLBS)
+import Jizhang.API.Record.Projection (recordToApiRecord, recordToSplitRecord, recordToTransferRecord)
+import Jizhang.API.Record.Input (resolveExpenseRequest, resolveIncomeRequest, resolveTransferRequest, withGroupCurrencyLock)
+import Jizhang.API.Record.Service (getRecordPage)
 import Jizhang.API.Common
 import Jizhang.API.Types
-import Jizhang.API.Utils
+import Jizhang.API.Internal.Resource (ensureGroupExists, ensureGroupMember, ensureRecordExists, getGroupUserMap)
 import qualified Jizhang.Database as D
 import qualified Jizhang.Database.Schema as S
 import Log.Class
 import Servant
 
+-- | Expense, income and transfer creation and replacement share the group ledger;
+-- replacement routes reject an existing record of a different kind with 400.
 type RecordAPI =
-  -- Add a new expense record to a group
   "groups" :> Capture "groupId" GroupId :> "records" :> "expense" :> ReqBody '[JSON] ExpenseRecordRequest :> Post '[JSON] Record
-    -- Add a new transfer record to a group
     :<|> "groups" :> Capture "groupId" GroupId :> "records" :> "transfer" :> ReqBody '[JSON] TransferRecordRequest :> Post '[JSON] Record
-    -- Get a specific record
     :<|> "groups" :> Capture "groupId" GroupId :> "records" :> Capture "recordId" RecordId :> Get '[JSON] Record
-    -- Get all records in a group
     :<|> "groups" :> Capture "groupId" GroupId :> "records" :> WithPagination (Get '[JSON] (PaginatedResponse Record))
-    -- Delete a specific record
     :<|> "groups" :> Capture "groupId" GroupId :> "records" :> Capture "recordId" RecordId :> Delete '[JSON] NoContent
-    -- Update a specific transfer record
     :<|> "groups" :> Capture "groupId" GroupId :> "records" :> "transfer" :> Capture "recordId" RecordId :> ReqBody '[JSON] TransferRecordRequest :> Put '[JSON] Record
-    -- Update a specific expense record
     :<|> "groups" :> Capture "groupId" GroupId :> "records" :> "expense" :> Capture "recordId" RecordId :> ReqBody '[JSON] ExpenseRecordRequest :> Put '[JSON] Record
+    :<|> "groups" :> Capture "groupId" GroupId :> "records" :> "income" :> ReqBody '[JSON] IncomeRecordRequest :> Post '[JSON] Record
+    :<|> "groups" :> Capture "groupId" GroupId :> "records" :> "income" :> Capture "recordId" RecordId :> ReqBody '[JSON] IncomeRecordRequest :> Put '[JSON] Record
 
 recordServer :: AuthUser -> MyServer RecordAPI
 recordServer authUser =
@@ -45,120 +47,97 @@ recordServer authUser =
     :<|> deleteRecord authUser
     :<|> updateTransfer authUser
     :<|> updateExpense authUser
-
-getRecordsByGroupId :: UUID -> MyHandler [Record]
-getRecordsByGroupId gId = do
-  ensureGroupExists gId
-  rs <- runDB $ D.getRecordsWithSplitsForGroup gId
-  um <- getGroupUserMap gId
-  let mp = M.fromListWith (++) [(r, maybeToList s) | (r, s) <- rs]
-  pure $
-    map (\(r, ss) -> if S.isTransferRecord r then recordToTransferRecord um r else recordToExpenseRecord um r ss) $
-      sortOn (S._createdAt . fst) $
-        M.toList mp
+    :<|> addIncomeRecord authUser
+    :<|> updateIncome authUser
 
 addExpenseRecord :: AuthUser -> GroupId -> ExpenseRecordRequest -> MyHandler Record
-addExpenseRecord authUser (GroupId gId) req@ExpenseRecordRequest {..} = do
-  logInfo_ $ "Adding expense record to group " <> toText gId
-  ensureGroupExists gId
+addExpenseRecord = addSplitRecord D.ExpenseKind resolveExpenseRequest
+
+addIncomeRecord :: AuthUser -> GroupId -> IncomeRecordRequest -> MyHandler Record
+addIncomeRecord = addSplitRecord D.IncomeKind resolveIncomeRequest
+
+-- | Resolve participants and allocations before the atomic currency-locked insert.
+addSplitRecord :: D.SplitRecordKind -> (S.Group -> request -> MyHandler D.ResolvedSplitRecord) -> AuthUser -> GroupId -> request -> MyHandler Record
+addSplitRecord kind resolveRequest authUser (GroupId gId) req = do
+  logInfo_ $ "Adding " <> D.splitRecordKindText kind <> " record to group " <> toText gId
+  group <- fst <$> fetchOrFail "Group" gId (runDB $ D.getGroupWithMembers gId)
   ensureGroupMember (authUserId authUser) gId
-  validateExpenseRecordRequest gId req
-  payer <- lookupUser (coerce byUsername)
-  splitUsers <- forM splits $ \RecordSplitRequest {..} -> do
-    u <- lookupUser (coerce username)
-    pure (S._userId u, share)
-  (record, ss) <- runDB $ do
-    rec <- D.insertRecord title amount (S._userId payer) Nothing gId date Nothing
-    ss <- forM splitUsers $ \(uid, sh) ->
-      D.insertRecordSplit (S._recordId rec) uid sh
-    pure (rec, ss)
+  resolved <- resolveRequest group req
+  (record, ss) <- withGroupCurrencyLock group $ D.insertSplitRecord kind gId Nothing resolved
   um <- getGroupUserMap gId
-  pure $ recordToExpenseRecord um record ss
+  currencies <- asks appCurrencies
+  fromStoredData $ recordToSplitRecord kind currencies um record ss
 
 addTransferRecord :: AuthUser -> GroupId -> TransferRecordRequest -> MyHandler Record
 addTransferRecord authUser (GroupId gId) req@TransferRecordRequest {..} = do
   logInfo_ $ "Adding transfer record to group " <> toText gId
-  ensureGroupExists gId
+  group <- fst <$> (fetchOrFail "Group" gId $ runDB (D.getGroupWithMembers gId))
   ensureGroupMember (authUserId authUser) gId
-  validateTransferRecordRequest gId req
-  payer <- lookupUser (coerce byUsername)
-  receiver <- lookupUser (coerce toUsername)
-  record <- runDB $ D.insertRecord "Transfer" amount (S._userId payer) (Just (S._userId receiver)) gId date Nothing
+  resolved <- resolveTransferRequest group req
+  record <- withGroupCurrencyLock group $ D.insertTransferRecord gId resolved
   um <- getGroupUserMap gId
-  pure $ recordToTransferRecord um record
+  currencies <- asks appCurrencies
+  fromStoredData $ recordToTransferRecord currencies um (coerce toUserId) record
 
+-- | Authorize the group before projecting persisted amounts and historical users.
 getRecord :: AuthUser -> GroupId -> RecordId -> MyHandler Record
 getRecord authUser (GroupId gId) (RecordId rId) = do
-  -- We actually don't need group to get the record, but we still check it exists
   logInfo_ $ "Fetching record with ID " <> toText rId <> " in group " <> toText gId
   ensureGroupExists gId
   ensureGroupMember (authUserId authUser) gId
-  (record, ssplits) <- fetchOrFail "Record" rId $ runDB (D.getRecordWithSplits rId)
+  (record, ssplits) <- fetchOrFail "Record" rId $ runDB (D.getRecordWithSplits gId rId)
   um <- getGroupUserMap gId
-  pure $
-    if S.isTransferRecord record
-      then recordToTransferRecord um record
-      else recordToExpenseRecord um record ssplits
+  currencies <- asks appCurrencies
+  fromStoredData $ recordToApiRecord currencies um record ssplits
 
+-- | Membership is checked here; the shared service filters and sorts before slicing.
 getRecordsInGroup :: AuthUser -> GroupId -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> MyHandler (PaginatedResponse Record)
-getRecordsInGroup authUser (GroupId gId) mQuery mOffset mLimit mSort = do
+getRecordsInGroup authUser group@(GroupId gId) mQuery mOffset mLimit mSort = do
   logInfo_ $ "Fetching all records in group " <> toText gId
   ensureGroupMember (authUserId authUser) gId
-  records <- getRecordsByGroupId gId
-  pure $ paginateResponse mOffset mLimit mQuery mSort sortRecords $ filterRecords mQuery records
+  getRecordPage group mQuery mOffset mLimit mSort
 
 deleteRecord :: AuthUser -> GroupId -> RecordId -> MyHandler NoContent
 deleteRecord authUser (GroupId gId) (RecordId rId) = do
-  -- Again we don't need group to delete the record, but we still check it exists
   logInfo_ $ "Deleting record with ID " <> toText rId <> " in group " <> toText gId
-  ensureGroupExists gId
+  group <- fst <$> (fetchOrFail "Group" gId $ runDB (D.getGroupWithMembers gId))
   ensureGroupMember (authUserId authUser) gId
-  ensureRecordExists rId
-  runDB $ D.deleteRecord rId
+  ensureRecordExists gId rId
+  withGroupCurrencyLock group $ D.deleteRecord gId rId
   pure NoContent
 
 updateTransfer :: AuthUser -> GroupId -> RecordId -> TransferRecordRequest -> MyHandler Record
-updateTransfer authUser (GroupId gId) (RecordId rId) req@TransferRecordRequest {..} = do
+updateTransfer authUser (GroupId gId) (RecordId rId) req = do
   logInfo_ $ "Updating transfer record with ID " <> toText rId <> " in group " <> toText gId
   ensureGroupMember (authUserId authUser) gId
   old <- getRecord authUser (GroupId gId) (RecordId rId)
   case old of
     TransferRecord {} -> do
-      validateTransferRecordRequest gId req
-      payer <- lookupUser (coerce byUsername)
-      receiver <- lookupUser (coerce toUsername)
-      _ <- runDB $ D.updateRecord rId Nothing (Just amount) (Just $ S._userId payer) (Just $ Just $ S._userId receiver) (Just date)
+      group <- fst <$> (fetchOrFail "Group" gId $ runDB (D.getGroupWithMembers gId))
+      resolved <- resolveTransferRequest group req
+      withGroupCurrencyLock group $ D.replaceTransferRecord gId rId resolved
       getRecord authUser (GroupId gId) (RecordId rId)
     _ -> throwError $ err400 {errBody = "Record is not a transfer record"}
 
 updateExpense :: AuthUser -> GroupId -> RecordId -> ExpenseRecordRequest -> MyHandler Record
-updateExpense authUser (GroupId gId) (RecordId rId) req@ExpenseRecordRequest {..} = do
-  logInfo_ $ "Updating expense record with ID " <> toText rId <> " in group " <> toText gId
+updateExpense = updateSplitRecord D.ExpenseKind resolveExpenseRequest
+
+updateIncome :: AuthUser -> GroupId -> RecordId -> IncomeRecordRequest -> MyHandler Record
+updateIncome = updateSplitRecord D.IncomeKind resolveIncomeRequest
+
+-- | Preserve the record kind while replacing its validated monetary allocations.
+updateSplitRecord :: D.SplitRecordKind -> (S.Group -> request -> MyHandler D.ResolvedSplitRecord) -> AuthUser -> GroupId -> RecordId -> request -> MyHandler Record
+updateSplitRecord kind resolveRequest authUser gid@(GroupId gId) rid@(RecordId rId) req = do
+  logInfo_ $ "Updating " <> D.splitRecordKindText kind <> " record with ID " <> toText rId <> " in group " <> toText gId
   ensureGroupMember (authUserId authUser) gId
-  old <- getRecord authUser (GroupId gId) (RecordId rId)
-  case old of
-    ExpenseRecord {recordId = rid} -> do
-      validateExpenseRecordRequest gId req
-      payer <- lookupUser (coerce byUsername)
-      splitUsers <- forM splits $ \RecordSplitRequest {..} -> do
-        u <- lookupUser (coerce username)
-        pure (S._userId u, share)
-      runDB $ do
-        D.deleteRecordSplitsForRecord rId
-        D.updateRecord rId (Just title) (Just amount) (Just $ S._userId payer) Nothing (Just date)
-        forM_ splitUsers $ \(uid, sh) ->
-          D.insertRecordSplit (coerce rid) uid sh
-      getRecord authUser (GroupId gId) (RecordId rId)
-    _ -> throwError $ err400 {errBody = "Record is not an expense record"}
-
-filterRecords :: Maybe Text -> [Record] -> [Record]
-filterRecords Nothing = id
-filterRecords (Just queryText) = filter (matchesQuery queryText . recordTitleOf)
-
-sortRecords :: [Record] -> Maybe Text -> [Record]
-sortRecords records Nothing = sortOn recordTitleOf records
-sortRecords records (Just sortText) = applySort sortText recordTitleOf records
-
-recordTitleOf :: Record -> Text
-recordTitleOf (ExpenseRecord _ title _ _ _ _ _ _) = title
-recordTitleOf (TransferRecord _ title _ _ _ _ _ _) = title
+  old <- getRecord authUser gid rid
+  case (kind, old) of
+    (D.ExpenseKind, ExpenseRecord {}) -> replace
+    (D.IncomeKind, IncomeRecord {}) -> replace
+    _ -> throwError $ err400 {errBody = "Record is not an " <> textToLBS (D.splitRecordKindText kind) <> " record"}
+  where
+    replace = do
+      group <- fst <$> fetchOrFail "Group" gId (runDB $ D.getGroupWithMembers gId)
+      resolved <- resolveRequest group req
+      withGroupCurrencyLock group $ D.replaceSplitRecord kind gId rId resolved
+      getRecord authUser gid rid

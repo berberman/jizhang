@@ -4,3 +4,10 @@ result
 result-bin
 links
 jizhang.db
+/.local/
+.env
+.env.*
+!.env.example
+.DS_Store
+__pycache__/
+*.py[cod]

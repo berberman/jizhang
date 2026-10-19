@@ -1,23 +1,37 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeOperators #-}
 
+-- | Member-authorized receipt routes group expense records under one uploader.
+-- Batch mutations validate child requests before atomically changing the receipt.
 module Jizhang.API.Receipt where
 
-import Control.Monad (forM, forM_)
+import Control.Monad (forM)
+import Control.Monad.Reader (asks)
 import Data.Coerce (coerce)
 import Data.List (sortOn)
 import Data.Text (Text)
 import Data.UUID (UUID, toText)
 import Jizhang.API.Common
+import Jizhang.API.App
+import Jizhang.API.RequestProtection (enforceExpensiveLimit)
+import Jizhang.RequestProtection (Principal (UserPrincipal))
 import Jizhang.API.Types
-import Jizhang.API.Utils
+import Jizhang.API.Internal.Error (fromStoredData, fetchOrFail)
+import Jizhang.API.User.Projection (UserMap, resolveUser)
+import Jizhang.API.Record.Projection (recordToSplitRecord)
+import Jizhang.API.Record.Input (resolveExpenseRequest, withGroupCurrencyLock)
+import Jizhang.API.Internal.Resource (getGroupUserMap, ensureGroupExists, ensureGroupMember, ensureReceiptExists)
+import Jizhang.Currency (CurrencyCatalog)
 import qualified Jizhang.Database as D
 import qualified Jizhang.Database.Schema as S
 import Log.Class
 import Servant
 
+-- | Receipt IDs are scoped to the captured group; replacement replaces all children,
+-- and deletion removes the receipt together with its child expenses.
 type ReceiptAPI =
   -- Create a new receipt with batch records
   "groups" :> Capture "groupId" GroupId :> "receipts" :> ReqBody '[JSON] CreateReceiptRequest :> Post '[JSON] Receipt
@@ -25,7 +39,7 @@ type ReceiptAPI =
     :<|> "groups" :> Capture "groupId" GroupId :> "receipts" :> WithPagination (Get '[JSON] (PaginatedResponse Receipt))
     -- Get a specific receipt with its records
     :<|> "groups" :> Capture "groupId" GroupId :> "receipts" :> Capture "receiptId" ReceiptId :> Get '[JSON] Receipt
-    -- Delete a receipt (records' receipt FK set to NULL)
+    -- Delete a receipt and its child expenses
     :<|> "groups" :> Capture "groupId" GroupId :> "receipts" :> Capture "receiptId" ReceiptId :> Delete '[JSON] NoContent
     -- Update a receipt (replace note and all records)
     :<|> "groups" :> Capture "groupId" GroupId :> "receipts" :> Capture "receiptId" ReceiptId :> ReqBody '[JSON] UpdateReceiptRequest :> Put '[JSON] Receipt
@@ -38,40 +52,33 @@ receiptServer authUser =
     :<|> deleteReceipt authUser
     :<|> updateReceipt authUser
 
+-- | Shared loader without authorization; callers must authorize the parent group.
 getReceiptsByGroupId :: UUID -> MyHandler [Receipt]
 getReceiptsByGroupId gId = do
   ensureGroupExists gId
   receipts <- runDB $ D.getReceiptsForGroup gId
   um <- getGroupUserMap gId
-  forM receipts $ \receipt -> buildReceiptResponse um receipt
+  currencies <- asks appCurrencies
+  forM receipts $ \receipt -> buildReceiptResponse currencies um receipt
 
+-- | Insert the receipt and all validated expenses together; an empty receipt does
+-- not lock group currency policy. The authenticated member becomes its uploader.
 createReceipt :: AuthUser -> GroupId -> CreateReceiptRequest -> MyHandler Receipt
 createReceipt authUser (GroupId gId) CreateReceiptRequest {..} = do
+  enforceExpensiveLimit (UserPrincipal $ authUserId authUser)
   logInfo_ $ "Creating receipt in group " <> toText gId
-  ensureGroupExists gId
+  group <- fst <$> (fetchOrFail "Group" gId $ runDB (D.getGroupWithMembers gId))
   ensureGroupMember (authUserId authUser) gId
-  -- Validate all record requests upfront
-  forM_ records $ validateExpenseRecordRequest gId
-  -- Resolve all users before entering the DB transaction
-  resolved <- forM records $ \ExpenseRecordRequest {..} -> do
-    payerId <- S._userId <$> lookupUser (coerce byUsername)
-    resolvedSplits <- forM splits $ \RecordSplitRequest {..} -> do
-      uid <- S._userId <$> lookupUser (coerce username)
-      pure (uid, share)
-    pure (title, amount, payerId, date, resolvedSplits)
-  -- Create receipt and all records in a single DB transaction
-  (receipt, dbRecords) <- runDB $ do
+  resolved <- mapM (resolveExpenseRequest group) records
+  (receipt, dbRecords) <- (if null resolved then runDBTransaction else withGroupCurrencyLock group) $ do
     receipt <- D.insertReceipt gId (authUserId authUser) note
     let rctId = S._receiptId receipt
-    recs <- forM resolved $ \(t, a, payerId, d, splitUsers) -> do
-      rec <- D.insertRecord t a payerId Nothing gId d (Just rctId)
-      ss <- forM splitUsers $ \(uid, sh) ->
-        D.insertRecordSplit (S._recordId rec) uid sh
-      pure (rec, ss)
+    recs <- forM resolved $ D.insertSplitRecord D.ExpenseKind gId (Just rctId)
     pure (receipt, recs)
   um <- getGroupUserMap gId
-  let apiRecords = [recordToExpenseRecord um rec ss | (rec, ss) <- dbRecords]
-      uploadedByUser = resolveUser um (S.unUserId $ S._receiptUploadedBy receipt)
+  currencies <- asks appCurrencies
+  apiRecords <- fromStoredData $ traverse (uncurry (recordToSplitRecord D.ExpenseKind currencies um)) dbRecords
+  let uploadedByUser = resolveUser um (S.unUserId $ S._receiptUploadedBy receipt)
   pure
     Receipt
       { receiptId = coerce $ S._receiptId receipt,
@@ -94,55 +101,38 @@ getReceipt authUser (GroupId gId) (ReceiptId rId) = do
   logInfo_ $ "Fetching receipt " <> toText rId <> " in group " <> toText gId
   ensureGroupExists gId
   ensureGroupMember (authUserId authUser) gId
-  receipt <- fetchOrFail "Receipt" rId $ runDB (D.getReceipt rId)
+  receipt <- fetchOrFail "Receipt" rId $ runDB (D.getReceipt gId rId)
   um <- getGroupUserMap gId
-  buildReceiptResponse um receipt
+  currencies <- asks appCurrencies
+  buildReceiptResponse currencies um receipt
 
 deleteReceipt :: AuthUser -> GroupId -> ReceiptId -> MyHandler NoContent
 deleteReceipt authUser (GroupId gId) (ReceiptId rId) = do
   logInfo_ $ "Deleting receipt " <> toText rId <> " in group " <> toText gId
-  ensureGroupExists gId
+  group <- fst <$> (fetchOrFail "Group" gId $ runDB (D.getGroupWithMembers gId))
   ensureGroupMember (authUserId authUser) gId
-  ensureReceiptExists rId
-  -- Delete associated records (with splits) and the receipt in one transaction
-  runDB $ do
-    recs <- D.getRecordsForReceipt rId
-    forM_ recs $ \rec -> do
-      D.deleteRecordSplitsForRecord (S._recordId rec)
-      D.deleteRecord (S._recordId rec)
-    D.deleteReceipt rId
+  ensureReceiptExists gId rId
+  children <- runDB $ D.getRecordsForReceipt gId rId
+  (if null children then runDBTransaction else withGroupCurrencyLock group) $
+    D.deleteReceiptWithRecords gId rId
   pure NoContent
 
+-- | Replace the note and children while retaining the original uploader and creation time.
 updateReceipt :: AuthUser -> GroupId -> ReceiptId -> UpdateReceiptRequest -> MyHandler Receipt
 updateReceipt authUser (GroupId gId) (ReceiptId rId) UpdateReceiptRequest {..} = do
+  enforceExpensiveLimit (UserPrincipal $ authUserId authUser)
   logInfo_ $ "Updating receipt " <> toText rId <> " in group " <> toText gId
-  ensureGroupExists gId
+  group <- fst <$> (fetchOrFail "Group" gId $ runDB (D.getGroupWithMembers gId))
   ensureGroupMember (authUserId authUser) gId
-  receipt <- fetchOrFail "Receipt" rId $ runDB (D.getReceipt rId)
-  -- Validate and resolve all users upfront
-  forM_ records $ validateExpenseRecordRequest gId
-  resolved <- forM records $ \ExpenseRecordRequest {..} -> do
-    payerId <- S._userId <$> lookupUser (coerce byUsername)
-    resolvedSplits <- forM splits $ \RecordSplitRequest {..} -> do
-      uid <- S._userId <$> lookupUser (coerce username)
-      pure (uid, share)
-    pure (title, amount, payerId, date, resolvedSplits)
-  -- Delete old records and insert new ones in a single DB transaction
-  dbRecords <- runDB $ do
-    D.updateReceiptNote rId note
-    oldRecs <- D.getRecordsForReceipt rId
-    forM_ oldRecs $ \rec -> do
-      D.deleteRecordSplitsForRecord (S._recordId rec)
-      D.deleteRecord (S._recordId rec)
-    forM resolved $ \(t, a, payerId, d, splitUsers) -> do
-      rec <- D.insertRecord t a payerId Nothing gId d (Just rId)
-      ss <- forM splitUsers $ \(uid, sh) ->
-        D.insertRecordSplit (S._recordId rec) uid sh
-      pure (rec, ss)
-  -- Build response
+  receipt <- fetchOrFail "Receipt" rId $ runDB (D.getReceipt gId rId)
+  resolved <- mapM (resolveExpenseRequest group) records
+  dbRecords <-
+    (if null resolved then runDBTransaction else withGroupCurrencyLock group) $
+      D.replaceReceiptRecords gId rId note resolved
   um <- getGroupUserMap gId
-  let apiRecords = [recordToExpenseRecord um rec ss | (rec, ss) <- dbRecords]
-      uploadedByUser = resolveUser um (S.unUserId $ S._receiptUploadedBy receipt)
+  currencies <- asks appCurrencies
+  apiRecords <- fromStoredData $ traverse (uncurry (recordToSplitRecord D.ExpenseKind currencies um)) dbRecords
+  let uploadedByUser = resolveUser um (S.unUserId $ S._receiptUploadedBy receipt)
   pure
     Receipt
       { receiptId = coerce rId,
@@ -153,18 +143,15 @@ updateReceipt authUser (GroupId gId) (ReceiptId rId) UpdateReceiptRequest {..} =
         createdAt = S._receiptCreatedAt receipt
       }
 
--- | Build a Receipt API response from a schema Receipt
-buildReceiptResponse :: UserMap -> S.Receipt -> MyHandler Receipt
-buildReceiptResponse um receipt = do
+-- | Project persisted child allocations; the historical user map must contain the uploader.
+buildReceiptResponse :: CurrencyCatalog -> UserMap -> S.Receipt -> MyHandler Receipt
+buildReceiptResponse currencies um receipt = do
   let rctId = S._receiptId receipt
-  recs <- runDB $ D.getRecordsForReceipt rctId
-  -- For each record, get its splits and build the API Record
+      gId = S.unGroupId $ S._receiptGroup receipt
+  recs <- runDB $ D.getRecordsForReceipt gId rctId
   apiRecords <- forM recs $ \rec -> do
-    if S.isTransferRecord rec
-      then pure $ recordToTransferRecord um rec
-      else do
-        ss <- runDB $ D.getRecordSplitsForRecord (S._recordId rec)
-        pure $ recordToExpenseRecord um rec ss
+    ss <- runDB $ D.getRecordSplitsForRecord (S._recordId rec)
+    fromStoredData $ recordToSplitRecord D.ExpenseKind currencies um rec ss
   let uploadedByUser = resolveUser um (S.unUserId $ S._receiptUploadedBy receipt)
   pure
     Receipt

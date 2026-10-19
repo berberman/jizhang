@@ -3,33 +3,33 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeOperators #-}
 
+-- | Public local signup and password login. Credentials use unlogged persistence;
+-- session creation rechecks the verified account snapshot before committing.
 module Jizhang.API.Auth
   ( AuthAPI,
     authServer,
   )
 where
 
-import Control.Monad (when)
-import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Reader (asks)
-import Crypto.BCrypt (hashPasswordUsingPolicy, slowerBcryptHashingPolicy, validatePassword)
+import Control.Monad (unless)
+import Control.Monad.Except (catchError)
+import Crypto.BCrypt (validatePassword)
+import qualified Data.ByteString as BS
 import qualified Data.Text as T
-import Data.Text.Encoding (decodeUtf8, encodeUtf8)
-import qualified Data.Text.Lazy as TL
-import qualified Data.Text.Lazy.Encoding as TLE
-import Data.Time (NominalDiffTime, addUTCTime, getCurrentTime)
+import Data.Text.Encoding (encodeUtf8)
+import Jizhang.API.App
+import Jizhang.API.RequestProtection (enforceUserCredentialLimit)
 import Jizhang.API.Types
-import Jizhang.API.Utils
+import Jizhang.API.User.Account (normalizeUsername, normalizeEmail, prepareLocalUserAccount)
+import Jizhang.API.User.Projection (schemaUserToApiUser)
+import Jizhang.Auth.Session (SessionAuthentication (PasswordSession), prepareUserSession)
 import qualified Jizhang.Database as D
+import qualified Jizhang.Database.Auth as A
 import qualified Jizhang.Database.Schema as S
 import Log.Class
 import Servant
-import Servant.Auth.Server (makeJWT)
 
--- | JWT access token lifetime: 1 day
-accessTokenLifetime :: NominalDiffTime
-accessTokenLifetime = 24 * 60 * 60
-
+-- | Registration returns a public user, while login returns a persisted-session token.
 type AuthAPI =
   "auth"
     :> ( "register" :> ReqBody '[JSON] RegisterRequest :> Post '[JSON] User
@@ -39,49 +39,51 @@ type AuthAPI =
 authServer :: MyServer AuthAPI
 authServer = register :<|> login
 
+-- | Prepare credentials before atomically checking whether local signup is enabled.
 register :: RegisterRequest -> MyHandler User
 register RegisterRequest {..} = do
-  logInfo_ $ "Registering user: " <> registerUsername
-  -- TODO: more robust validation?
-  when (T.null registerUsername) $ throwError $ err400 {errBody = "Username cannot be empty"}
-  when (T.length registerUsername > 50) $ throwError $ err400 {errBody = "Username is too long"}
-  when (T.null registerPassword) $ throwError $ err400 {errBody = "Password cannot be empty"}
-  when (T.length registerPassword < 6) $ throwError $ err400 {errBody = "Password must be at least 6 characters"}
-  exists <- runDB $ D.checkUserExists registerUsername
-  when exists $ throwError $ err409 {errBody = "User already exists"}
-  mHash <- liftIO $ hashPasswordUsingPolicy slowerBcryptHashingPolicy (encodeUtf8 registerPassword)
-  case mHash of
-    Nothing -> throwError $ err500 {errBody = "Failed to hash password"}
-    Just hash -> do
-      sUser <- runDB $ D.insertUser registerUsername (decodeUtf8 hash)
-      pure $ schemaUserToApiUser sUser
+  (username, displayName, email, hash) <- prepareLocalUserAccount registerUsername registerDisplayName registerEmail registerPassword
+  -- Signup policy can change while bcrypt runs; decide it with the insert, not before hashing.
+  result <- runDBSensitiveTransaction $ do
+    settings <- A.getAuthSettings
+    if S._settingsLocalRegistrationEnabled settings
+      then Just <$> D.insertUser username displayName email (Just hash)
+      else pure Nothing
+  maybe (throwError $ err403 {errBody = "Local registration is disabled"}) (pure . schemaUserToApiUser) result
 
--- | Issue a JWT access token for the given user
-issueAccessToken :: S.User -> MyHandler T.Text
-issueAccessToken sUser = do
-  jwtSettings <- asks appJWTSettings
-  now <- liftIO getCurrentTime
-  let expiry = addUTCTime accessTokenLifetime now
-      claims = AuthUser (S._userId sUser) (S._username sUser)
-  eToken <- liftIO $ makeJWT claims jwtSettings (Just expiry)
-  case eToken of
-    Left _err -> throwError $ err500 {errBody = "Failed to generate access token"}
-    Right tokenBS -> pure $ TL.toStrict $ TLE.decodeUtf8 tokenBS
-
+-- | Normalize identifier failures to the same 401 as bad credentials; rate-limit
+-- by resolved account or identifier digest before attempting password verification.
 login :: LoginRequest -> MyHandler LoginResponse
 login LoginRequest {..} = do
-  logInfo_ $ "Login attempt for user: " <> loginUsername
-  mUser <- runDB $ D.getUserByUsername loginUsername
+  logInfo_ "Local password login attempt"
+  let invalid = err401 {errBody = "Invalid username/email or password"}
+      raw = T.strip loginIdentifier
+      isEmail = T.any (== '@') (T.drop 1 raw)
+      normalize = if isEmail then normalizeEmail raw else normalizeUsername raw
+  identifier <- normalize `catchError` (\err -> if errHTTPCode err == 400 then throwError invalid else throwError err)
+  mUser <- runDBSensitive $ if isEmail then D.getUserByEmail identifier else D.getUserByUsername identifier
+  enforceUserCredentialLimit (S._userId <$> mUser) identifier
   case mUser of
-    Nothing -> throwError $ err401 {errBody = "Invalid username or password"}
-    Just sUser -> do
-      let valid = validatePassword (encodeUtf8 $ S._passwordHash sUser) (encodeUtf8 loginPassword)
-      if not valid
-        then throwError $ err401 {errBody = "Invalid username or password"}
-        else do
-          accessTok <- issueAccessToken sUser
-          pure $
-            LoginResponse
-              { accessToken = accessTok,
-                loginUser = schemaUserToApiUser sUser
-              }
+    Just sUser
+      | S._enabled sUser,
+        BS.length (encodeUtf8 loginPassword) <= 72,
+        Just hash <- S._passwordHash sUser,
+        validatePassword (encodeUtf8 hash) (encodeUtf8 loginPassword) -> do
+          -- Bcrypt runs without holding a transaction; its result proves only this account snapshot.
+          (session, response) <- prepareUserSession sUser PasswordSession
+          runDBSensitiveTransaction $ do
+            current <- D.getUserById (S._userId sUser)
+            -- A concurrent password reset or disable must win over this already-verified password.
+            case current of
+              Just user -> do
+                unless
+                  ( S._enabled user
+                      && S._passwordHash user == S._passwordHash sUser
+                      && S._authInvalidatedAt user == S._authInvalidatedAt sUser
+                  )
+                  A.abortAuthTransaction
+                A.insertUserSession session
+              Nothing -> A.abortAuthTransaction
+          -- Keep the signed token private until its revocable session row has committed.
+          pure response
+    _ -> throwError invalid

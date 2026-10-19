@@ -1,0 +1,26 @@
+[general]
+host = "::"
+port = 8080
+root = "/public"
+health = true
+log-level = "error"
+directory-listing = false
+ignore-hidden-files = true
+disable-symlinks = true
+http2 = false
+https-redirect = false
+accept-markdown = false
+log-remote-address = false
+log-forwarded-for = false
+grace-period = 25
+
+# No CORS, proxy, rewrites, virtual hosts, or SPA/page fallback. Hash routes
+# do not require a fallback; unknown API paths must remain static-file 404s.
+[[advanced.headers]]
+source = "/**"
+headers = { Cache-Control = "no-cache" }
+
+# Later matching headers override both server defaults and the broad rule.
+[[advanced.headers]]
+source = "/runtime/api-base-url.txt"
+headers = { Cache-Control = "no-store", Content-Type = "text/plain; charset=utf-8" }
