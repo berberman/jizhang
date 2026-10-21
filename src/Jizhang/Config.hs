@@ -98,19 +98,19 @@ parseEnvironmentAuthentication values = case M.lookup "AUTH_CONFIG_SOURCE" value
 -- operator-supplied trust grants for interpreting forwarded client addresses.
 parseRequestProtectionConfig :: Map Text Text -> Either Text RequestProtectionConfig
 parseRequestProtectionConfig values = do
-  ip <- rate "RATE_LIMIT_IP_PER_MINUTE" 600 120
-  auth <- rate "RATE_LIMIT_AUTH_PER_IP_PER_MINUTE" 20 10
-  account <- rate "RATE_LIMIT_ACCOUNT_PER_MINUTE" 300 60
-  expensive <- rate "RATE_LIMIT_EXPENSIVE_PER_ACCOUNT_PER_MINUTE" 30 10
-  credential <- rate "RATE_LIMIT_CREDENTIAL_PER_MINUTE" 10 5
-  authBody <- number "REQUEST_AUTH_BODY_MAX_BYTES" 65536 1048576
-  body <- number "REQUEST_BODY_MAX_BYTES" 1048576 16777216
-  bulkBody <- number "REQUEST_BULK_BODY_MAX_BYTES" 8388608 67108864
-  inFlight <- number "REQUEST_MAX_IN_FLIGHT" 32 1024
-  expensiveInFlight <- number "REQUEST_MAX_EXPENSIVE_IN_FLIGHT" 4 64
-  keys <- number "RATE_LIMIT_MAX_KEYS" 10000 1000000
+  ip <- rate "RATE_LIMIT_IP_PER_MINUTE" (protectionIpRate defaults)
+  auth <- rate "RATE_LIMIT_AUTH_PER_IP_PER_MINUTE" (protectionAuthIpRate defaults)
+  account <- rate "RATE_LIMIT_ACCOUNT_PER_MINUTE" (protectionPrincipalRate defaults)
+  expensive <- rate "RATE_LIMIT_EXPENSIVE_PER_ACCOUNT_PER_MINUTE" (protectionExpensiveRate defaults)
+  credential <- rate "RATE_LIMIT_CREDENTIAL_PER_MINUTE" (protectionCredentialRate defaults)
+  authBody <- number "REQUEST_AUTH_BODY_MAX_BYTES" (fromIntegral $ protectionAuthBodyBytes defaults) 1048576
+  body <- number "REQUEST_BODY_MAX_BYTES" (fromIntegral $ protectionBodyBytes defaults) 16777216
+  bulkBody <- number "REQUEST_BULK_BODY_MAX_BYTES" (fromIntegral $ protectionBulkBodyBytes defaults) 67108864
+  inFlight <- number "REQUEST_MAX_IN_FLIGHT" (protectionMaxInFlight defaults) 1024
+  expensiveInFlight <- number "REQUEST_MAX_EXPENSIVE_IN_FLIGHT" (protectionMaxExpensiveInFlight defaults) 64
+  keys <- number "RATE_LIMIT_MAX_KEYS" (protectionMaxKeys defaults) 1000000
   proxies <- case M.lookup "TRUSTED_PROXY_CIDRS" values of
-    Nothing -> Right []
+    Nothing -> Right $ protectionTrustedProxies defaults
     Just value | T.null (T.strip value) -> Right []
     Just value -> let elements = T.splitOn "," value in
       if length elements > 32 then proxyError else traverse (cidr . T.strip) elements
@@ -120,6 +120,7 @@ parseRequestProtectionConfig values = do
   validateRequestProtectionConfig cfg
   pure cfg
   where
+    defaults = defaultRequestProtectionConfig
     number :: Text -> Int -> Int -> Either Text Int
     number key fallback upper = case M.lookup key values of
       Nothing -> Right fallback
@@ -128,9 +129,9 @@ parseRequestProtectionConfig values = do
           Just parsed <- (readMaybe (T.unpack value) :: Maybe Integer),
           parsed >= 1, parsed <= toInteger upper -> Right $ fromInteger parsed
       _ -> Left $ key <> " is outside its permitted range"
-    rate key fallback burst = do
-      value <- number key fallback 1000000
-      pure $ RatePolicy value (min value burst)
+    rate key fallback = do
+      value <- number key (ratePerMinute fallback) 1000000
+      pure $ RatePolicy value (min value $ rateBurst fallback)
     asciiDecimal value = not (T.null value) && T.all (\c -> c >= '0' && c <= '9') value
     proxyError = Left "TRUSTED_PROXY_CIDRS must contain at most 32 valid IPv4/IPv6 CIDRs"
     cidr value = case T.splitOn "/" value of

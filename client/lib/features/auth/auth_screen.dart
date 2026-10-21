@@ -5,6 +5,7 @@ import '../../core/auth_flow_controller.dart';
 import '../../core/models.dart';
 import '../../core/session_controller.dart';
 import '../../shared/branding.dart';
+import '../../shared/legal.dart';
 import '../../shared/widgets.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -148,6 +149,7 @@ class _AuthScreenState extends State<AuthScreen> {
             const SizedBox(height: 12),
             OutlinedButton(onPressed: _busy ? null : _sso, child: Text('Continue with ${_options!.providerName}')),
           ],
+          LegalLinks(disabled: _busy),
           const SizedBox(height: 16),
           const AppVersionLabel(),
         ]),

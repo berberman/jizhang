@@ -4,12 +4,12 @@ set -eu
 # This is public browser configuration, never a secret or shell program.
 LC_ALL=C
 export LC_ALL
-value=${API_BASE_URL-}
+value=${API_BASE_URL-same-origin}
 invalid() {
-    printf '%s\n' 'API_BASE_URL must be an HTTP(S) base URL without credentials, query or fragment' >&2
+    printf '%s\n' 'API_BASE_URL must be same-origin or an HTTP(S) base URL without credentials, query or fragment' >&2
     exit 1
 }
-if [ -n "$value" ]; then
+if [ "$value" != same-origin ]; then
     case "$value" in
         http://*|https://*) ;;
         *) invalid ;;

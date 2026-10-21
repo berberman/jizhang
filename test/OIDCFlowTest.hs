@@ -156,7 +156,7 @@ continuation harness = do
 assertNoAccountEffects :: Connection -> Assertion
 assertNoAccountEffects conn = do
   counts <- query_ conn "SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM external_identities), (SELECT count(*) FROM user_sessions)" :: IO [(Int, Int, Int)]
-  assertEqual "callback created no user, identity or session" [(0, 0, 0)] counts
+  assertEqual "no user, identity or session" [(0, 0, 0)] counts
 
 oidcFlowTests :: TestTree
 oidcFlowTests =

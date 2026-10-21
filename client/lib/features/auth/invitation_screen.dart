@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/auth_flow_controller.dart';
 import '../../core/models.dart';
 import '../../shared/widgets.dart';
+import '../../shared/legal.dart';
 
 class InvitationScreen extends StatefulWidget {
   const InvitationScreen({super.key, required this.flow, required this.location});
@@ -127,6 +128,7 @@ class _InvitationScreenState extends State<InvitationScreen> {
           ],
         ] else if (!_busy) const Text('Request a new invitation from your administrator.'),
         TextButton(onPressed: _busy ? null : () async { if (!_busy && await FormNavigation.canExit(context) && mounted && !_busy) context.go('/login'); }, child: const Text('Cancel and return to sign-in')),
+        LegalLinks(disabled: _busy),
       ]),
     ))))));
   }

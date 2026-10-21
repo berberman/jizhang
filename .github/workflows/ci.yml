@@ -65,4 +65,4 @@ jobs:
       - name: Test
         run: nix develop .. --no-write-lock-file --command flutter test
       - name: Build web
-        run: nix develop .. --no-write-lock-file --command flutter build web --dart-define=API_BASE_URL=http://127.0.0.1:8080
+        run: nix develop .. --no-write-lock-file --command flutter build web

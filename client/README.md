@@ -25,21 +25,23 @@ versions; a separate SDK installation is not required.
 
 ## API configuration
 
-A nonempty compile-time `API_BASE_URL` takes precedence over runtime
-configuration. It must be an absolute HTTP(S) URL without credentials, query or
-fragment. A path prefix such as `https://example.org/api` is retained. Rebuild to
-change a compiled value.
+Web builds ship `runtime/api-base-url.txt` containing `same-origin`, which sends
+API requests to the browser origin. Preserve this file when copying built assets.
+To use a separate API host or a path prefix, replace the token with an absolute
+HTTP(S) URL such as `https://example.org/api`, without credentials, query or
+fragment. Surrounding file whitespace is allowed; empty content is invalid.
 
-Without a compiled override, web startup fetches `runtime/api-base-url.txt`
-relative to the browser URL, including a subdirectory deployment. The request
-uses a fresh `_runtime` cache key, no-cache, no redirects and a five-second
-timeout. The file is strict UTF-8 plain text; trimmed empty content explicitly
-selects the browser origin.
+Web startup fetches the file relative to the browser URL, including a subdirectory
+deployment. The request uses a fresh `_runtime` cache key, no-cache, no redirects
+and a five-second timeout. The file must be strict UTF-8 plain text. Failed
+fetches, non-200 responses, invalid UTF-8 and invalid values stop startup before
+ordinary API requests, without falling back to another API address.
 
-Failed fetches, non-200 responses, invalid UTF-8 and invalid URLs stop startup
-before ordinary API requests. Non-web launches do not fetch this file. Normal
-non-container web builds ship an empty file for same-origin use; preserve it
-when copying built assets.
+For development or advanced static builds, a nonempty compile-time `API_BASE_URL`
+overrides the runtime file. It must be an absolute HTTP(S) URL with the same URL
+restrictions; a path prefix is retained. Rebuild to change a compiled value.
+Non-web launches do not fetch the runtime file and retain their existing
+compile-time configuration behavior.
 
 For container runtime configuration, CORS, TLS and proxy routing, see the
 [deployment guide](../docs/deployment.md).

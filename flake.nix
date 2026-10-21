@@ -41,6 +41,7 @@
                 fileset = pkgs.lib.fileset.unions [
                   ./client/lib
                   ./client/web
+                  ./client/assets
                   ./client/pubspec.yaml
                   ./client/pubspec.lock
                 ];

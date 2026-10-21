@@ -22,7 +22,7 @@ Future<void> main() async {
     );
   } on FormatException {
     client.close();
-    _showConfigurationError('API_BASE_URL is not a valid HTTP URL');
+    _showConfigurationError(apiConfigurationFormatMessage);
     return;
   } on ApiConfigurationException {
     client.close();

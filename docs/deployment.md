@@ -2,6 +2,17 @@
 
 Commands run from the repository root unless noted. For local launcher setup, see [Development](development.md). Authentication keys, provider policy and startup reconciliation are defined in [Authentication](authentication.md#configuration-ownership).
 
+Each instance is operated by its deployer. Review [data handling](privacy.md) for
+storage, access, retention, and optional external providers, and
+[open-source notices](licenses.md) before distributing built artifacts.
+
+Recommended production layout: one HTTPS origin, with your reverse proxy routing
+API paths to the backend and other paths to the web container. The basic
+[environment template](../.env.example) covers that layout. Provider/signup policy
+is configured in the admin console by default. Use the
+[advanced configuration reference](configuration.md) only for settings you need
+to override; request safeguards remain enabled without listing their defaults.
+
 ## Application images
 
 Nix `dockerTools` produces independent `backendImage` and `webImage` archives for `x86_64-linux` (Docker `linux/amd64`) and `aarch64-linux` (`linux/arm64`). These Docker-loadable `.tar.gz` files are neither build contexts nor multiarchitecture indexes.
@@ -28,7 +39,7 @@ Select `--system aarch64-linux` for a native arm64 Linux builder. `--system` is 
 
 Flutter builds release assets with `/` base href and no compiled API URL, using the pinned SDK and sandboxed, hash-checked dependencies from `client/pubspec.lock`. It does not consume `client/build/web` or a host pub cache. Runtime images contain neither Flutter/Dart nor Nix build tools.
 
-Before either Nix store imports source, the helper creates an owner-only temporary public-source snapshot. It copies only required flake/Cabal/license/changelog inputs, backend source/data, `nix`/`docker` packaging, and client `lib`, `web`, pubspec and lockfile. It excludes hidden entries, env files, caches, build outputs and arbitrary root files. Selected symlinks/special files or missing inputs fail before Nix. Untracked public implementation files are included without Git staging.
+Before either Nix store imports source, the helper creates an owner-only temporary public-source snapshot. It copies only required flake/Cabal/license/changelog inputs, backend source/data, `nix`/`docker` packaging, and client `lib`, `web`, `assets`, pubspec and lockfile. It excludes hidden entries, env files, caches, build outputs and arbitrary root files. Selected symlinks/special files or missing inputs fail before Nix. Untracked public implementation files are included without Git staging.
 
 Do not bypass this boundary with raw `path:.` against an unfiltered working tree. Filtering after import cannot protect private files already copied into a store. A clean tracked public checkout may instead use `nix build .#packages.x86_64-linux.backendImage` and the corresponding `webImage`.
 
@@ -67,7 +78,26 @@ The loaded references are `jizhang-backend:local` and `jizhang-web:local`. Set `
 
 ## Protected configuration and Compose
 
-Copy [`.env.example`](../.env.example) under `umask 077`, keep `.env` mode 0600 and fill required blank values privately. Its comments show separate `openssl rand -base64 32` invocations writing JWT/OIDC keys directly to the protected file, plus independently generated application/superuser database passwords. Never display secrets, commit real env files or run expanded `compose config`; use `config --quiet`. Runtime environment secrets are visible to authorized Docker-engine administrators, not image layers or build arguments.
+Copy [`.env.example`](../.env.example) under `umask 077`, keep `.env` mode 0600,
+and replace the synthetic hostname. Fill blank secrets privately: use two
+independent 32-byte base64 keys and separate database passwords. Retain and back
+up the stable keys. After removing the four blank secret assignments from `.env`,
+append generated values directly without displaying them:
+
+```sh
+for key in JWT_SECRET_KEY OIDC_SECRET_KEY; do
+  printf '\n%s=' "$key" >> .env
+  openssl rand -base64 32 >> .env
+done
+for key in PGPASSWORD POSTGRES_PASSWORD; do
+  printf '\n%s=' "$key" >> .env
+  openssl rand -hex 32 >> .env
+done
+```
+
+Never commit real env files or print expanded Compose configuration; use
+`config --quiet`. Runtime secrets are visible to authorized Docker-engine
+administrators, not image layers or build arguments.
 
 Compose env files are not shell scripts. Single-quote values containing `$`, `#`, whitespace or special characters; escape an embedded single quote as `\'`. Unquoted/double-quoted values may interpolate `$`. Pass `PGPASSWORD` as data rather than assembling a credential-bearing DSN/URI. An explicit `DATABASE_URL` may be a libpq keyword string or PostgreSQL URI; its specified fields override PG environment defaults.
 
@@ -89,11 +119,26 @@ A Compose v2-compatible CLI is required; `docker-compose` may replace `docker co
 
 Compose requires nonempty `PUBLIC_API_URL`, trailing-slash `FRONTEND_URL`, `JWT_SECRET_KEY` and `OIDC_SECRET_KEY`; backend URL/key validation still applies. See [configuration ownership](authentication.md#configuration-ownership) for key requirements and authentication policy changes.
 
+The basic template deliberately omits rate/body/concurrency tuning, environment-owned
+authentication, database alternatives, and host binding/image overrides. Their
+defaults and validation are documented in [advanced configuration](configuration.md).
+
 ### Origins, TLS and public access
 
-For split origins, `CLIENT_ORIGINS` must list exact frontend origins without a trailing slash. There is no wildcard or credentialed bearer CORS, and no admin CORS. Default publications are API `127.0.0.1:8080` and web `127.0.0.1:3000`, adjustable through `API_BIND_HOST`/`API_PORT` and `WEB_BIND_HOST`/`WEB_PORT`. Admin lives at `PUBLIC_API_URL/admin-ui`, not the frontend origin.
+For the recommended same-origin layout, use the same HTTPS origin for
+`PUBLIC_API_URL` and `FRONTEND_URL` (with a trailing slash for the latter), keep
+`API_BASE_URL=same-origin`, and leave `CLIENT_ORIGINS` unset. Compose does not
+include the reverse proxy: use the [ingress routing table](#kubernetes-traefik-and-cnpg).
+Both host publications stay on loopback by default; the proxy must be able to
+reach the selected backend and web services.
 
-Public exposure, perimeter limits, ingress policy and TLS are operator responsibilities; the backend also enforces the request safeguards below. Keep secure admin cookies enabled for TLS. The example's `ADMIN_COOKIE_SECURE=false` is only for loopback HTTP. Serve production frontend and API over HTTPS to avoid mixed-content blocking.
+Separate origins remain supported. Set the web `API_BASE_URL` explicitly to the
+public API URL and the backend `CLIENT_ORIGINS` to the exact frontend origin.
+See [topology overrides](configuration.md#addresses-and-topology). There is no
+wildcard or credentialed bearer CORS, and no admin CORS; admin stays on the API
+origin. Public exposure, ingress policy and TLS remain operator responsibilities.
+Keep secure admin cookies enabled even with external TLS termination; only
+literal-loopback HTTP testing should set `ADMIN_COOKIE_SECURE=false`.
 
 ### PostgreSQL initialization and persistence
 
@@ -109,26 +154,33 @@ For remote PostgreSQL, use `PGSSLMODE=verify-full`. Public CA roots are included
 
 The web server runs as UID/GID 1000 on port 8080, serves read-only assets and never forwards API traffic. `/auth/options`, `/admin-ui` and unknown assets return 404 rather than Flutter index fallbacks. Open admin on the API origin.
 
-Supply only a public, browser-visible HTTP(S) `API_BASE_URL`, never Docker-internal names such as `http://backend:8080`, credentials or provider secrets. Empty/unset in the bare image means same-origin. Compose substitutes `PUBLIC_API_URL` only when `API_BASE_URL` is unset; explicitly empty selects same-origin behind an external gateway.
+`API_BASE_URL` defaults to the explicit token `same-origin` in both Compose and the bare web image. For split-origin hosting, supply an absolute browser-visible HTTP(S) API URL, optionally with a path prefix. Empty values are invalid; replace old empty values with `same-origin`. Compose no longer derives this setting from `PUBLIC_API_URL`, so split-origin deployments must supply it explicitly. Never use Docker-internal names such as `http://backend:8080`, credentials, or provider secrets.
 
 Before listening, the entrypoint validates the value, atomically writes `/public/runtime/api-base-url.txt` and execs the server. Invalid input or missing/unwritable runtime storage aborts startup. Only `/public/runtime` is writable: Compose supplies a UID/GID 1000 tmpfs; pods need an emptyDir with fsGroup 1000. No root startup, writable asset directory or asset copying is needed.
 
-The runtime file contains only the public URL, never keys, provider credentials, cookies or executable JavaScript. The server sends `Cache-Control: no-store` for it and `no-cache` for other assets. Flutter fetches with a fresh URL cache key on every startup and fails closed on configuration errors. A nonempty manual Dart define still wins; see [Flutter API configuration](../client/README.md#api-configuration).
+The runtime file contains only `same-origin` or the public API URL, never keys, provider credentials, cookies or executable JavaScript. The server sends `Cache-Control: no-store` for it and `no-cache` for other assets. Flutter fetches with a fresh URL cache key on every startup and fails closed on missing, empty, or malformed configuration. Development-only compiled overrides are described in [client configuration](../client/README.md#api-configuration).
 
 To change the API origin, recreate web with the new runtime value using the same image, then reload the page. API errors after successful configuration retain the application's retry/error UI. A stopped API does not make the independent web server unhealthy.
 
 ## Static web deployment
 
-Manual compile-time builds are separate from the runtime-configured image workflow. From the repository root:
+Build the normal runtime-configured client from the repository root:
 
 ```sh
 cd client
-flutter build web --dart-define=API_BASE_URL=https://api.example.org
+flutter build web
 ```
 
-Deploy `client/build/web` contents to a static HTTP(S) server. Set the backend's exact `CLIENT_ORIGINS` and use HTTPS for both services in production. For a subdirectory mount, supply Flutter's `--base-href=/your-path/`. Hash routes such as `/#/groups/<group-id>/records` need no API-style history fallback. Never route `/auth`, `/users` or `/groups` API requests to the static index behind a shared proxy.
+Deploy the complete `client/build/web` directory. Its runtime file already contains
+`same-origin`; for separate API hosting, set `runtime/api-base-url.txt` to the
+browser-visible API URL and configure the backend's exact `CLIENT_ORIGINS`.
+Use HTTPS for both services in production. For a subdirectory mount, supply
+Flutter's `--base-href=/your-path/`. Hash routes need no API-style history fallback.
+Never route API paths to the static index behind a shared proxy. Build-time
+API overrides are an advanced option documented in the [client README](../client/README.md#api-configuration).
 
-For a local release smoke, build with the local API URL, stop the development server, then run from the repository root:
+For a local release smoke, put the local API URL in the built runtime file, stop
+the development server, then run from the repository root:
 
 ```sh
 python3 -m http.server 3000 --bind 127.0.0.1 --directory client/build/web
@@ -136,24 +188,10 @@ python3 -m http.server 3000 --bind 127.0.0.1 --directory client/build/web
 
 ## Backend request safeguards
 
-Protection is enabled for direct launches and behind ingress, with no disable switch. Settings apply at process startup; invalid values fail before connecting to PostgreSQL. All numeric values must be nonempty ASCII decimal integers in the following ranges. Absent settings use these defaults:
-
-| Environment key | Default | Range and burst |
-| --- | --- | --- |
-| `RATE_LIMIT_IP_PER_MINUTE` | 600 | 1..1,000,000; burst `min(value,120)` |
-| `RATE_LIMIT_AUTH_PER_IP_PER_MINUTE` | 20 | 1..1,000,000; burst `min(value,10)` |
-| `RATE_LIMIT_ACCOUNT_PER_MINUTE` | 300 | 1..1,000,000; burst `min(value,60)` |
-| `RATE_LIMIT_EXPENSIVE_PER_ACCOUNT_PER_MINUTE` | 30 | 1..1,000,000; burst `min(value,10)` |
-| `RATE_LIMIT_CREDENTIAL_PER_MINUTE` | 10 | 1..1,000,000; burst `min(value,5)` |
-| `REQUEST_AUTH_BODY_MAX_BYTES` | 65536 (64 KiB) | 1..1,048,576 |
-| `REQUEST_BODY_MAX_BYTES` | 1048576 (1 MiB) | 1..16,777,216 |
-| `REQUEST_BULK_BODY_MAX_BYTES` | 8388608 (8 MiB) | 1..67,108,864 |
-| `REQUEST_MAX_IN_FLIGHT` | 32 | 1..1024 |
-| `REQUEST_MAX_EXPENSIVE_IN_FLIGHT` | 4 | 1..64; no greater than total in-flight |
-| `RATE_LIMIT_MAX_KEYS` | 10000 | 1..1,000,000 combined live keys |
-| `TRUSTED_PROXY_CIDRS` | empty | At most 32 comma-separated IPv4/IPv6 CIDRs |
-
-Require auth body cap <= ordinary cap <= bulk cap. Unset or whitespace-only proxy configuration trusts no forwarding metadata. Each nonempty CIDR needs a numeric address and explicit valid prefix; empty comma-separated elements fail startup. Compose passes these settings only to backend and preserves invalid empty numeric overrides for backend validation.
+Protection is enabled for direct launches and behind ingress, with no disable
+switch. Defaults live in the backend and do not need to be copied into `.env`.
+Startup validation and advanced overrides, including explicit proxy trust, are
+listed in [request and proxy configuration](configuration.md#request-and-proxy-overrides).
 
 The general IP bucket applies to every request except the liveness exemption below. Authentication IP/body classification covers `/auth/**` except exact `GET /auth/options`, both operator `POST /admin/auth/login` and `POST /admin/auth/session/login`, and `POST /users/me/reauthenticate`, `PUT /users/me/password`, `POST /users/me/oidc/start`. These requests also use the expensive admission pool.
 
@@ -180,7 +218,7 @@ The images can run in pods, but this repository ships no Kubernetes, Traefik or 
 
 | Path type | Paths | Service |
 | --- | --- | --- |
-| Prefix | `/auth`, `/users`, `/groups`, `/admin`, `/admin-ui`, `/currencies` | backend |
+| Prefix | `/auth`, `/users`, `/groups`, `/admin`, `/admin-ui`, `/currencies`, `/legal` | backend |
 | Exact | `/swagger.json` | backend |
 | Prefix | `/` | web |
 
@@ -206,7 +244,7 @@ For both limiters explicitly select `sourceCriterion.ipStrategy`, not request-ho
 
 Configure the edge's request-read deadline to 30 seconds and bound buffering memory and temporary disk at deployment level. Buffering is not a replacement for backend enforcement. Preserve proxy/backend failure statuses and any supplied Retry-After. Neither proxy nor clients may automatically replay mutations, including after network errors. This repository installs none of these ingress controls and supplies no version-specific CRDs.
 
-For same-origin operation, set backend `PUBLIC_API_URL=https://ledger.example.test`, `FRONTEND_URL=https://ledger.example.test/`, empty `CLIENT_ORIGINS`, and explicitly empty web `API_BASE_URL`. Keep `ADMIN_COOKIE_SECURE=true` even when Traefik terminates TLS. Frontend configuration must never contain provider secrets or keys.
+For same-origin operation, use the [basic configuration](#origins-tls-and-public-access): one HTTPS origin, `API_BASE_URL=same-origin`, no cross-origin allowlist, and secure admin cookies. Frontend configuration must never contain provider secrets or keys.
 
 Connect to CNPG's read-write Service, such as `ledger-db-rw` or its namespace-qualified DNS name, never a pod IP or read-only Service. Use the application-owner Secret URI as `DATABASE_URL`, or PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD with empty `DATABASE_URL`. Never use CNPG superuser credentials or silently rewrite its Secret URI. Set `PGSSLMODE=verify-full`, mount the CA read-only and point `PGSSLROOTCERT` to it. Explicit DSN fields override matching PG defaults.
 

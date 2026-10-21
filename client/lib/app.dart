@@ -22,6 +22,7 @@ import 'features/reports/report_screen.dart';
 import 'features/reports/statistics_screen.dart';
 import 'features/import/csv_import_screen.dart';
 import 'shared/app_scaffold.dart';
+import 'shared/legal.dart';
 import 'shared/widgets.dart';
 
 class JizhangApp extends StatefulWidget {
@@ -41,6 +42,7 @@ class _JizhangAppState extends State<JizhangApp> {
   @override
   void initState() {
     super.initState();
+    registerJizhangLicense();
     _previousImperativeURLs = GoRouter.optionURLReflectsImperativeAPIs;
     GoRouter.optionURLReflectsImperativeAPIs = true;
   }
@@ -49,6 +51,7 @@ class _JizhangAppState extends State<JizhangApp> {
     refreshListenable: widget.session,
     redirect: (context, state) {
       final path = state.uri.path;
+      if (path == '/legal/licenses') return null;
       if (!_authenticationPrepared) {
         _authenticationPrepared = true;
         _authFlow.prepareStartup(state.uri);
@@ -76,6 +79,7 @@ class _JizhangAppState extends State<JizhangApp> {
       ]),
     ))),
     routes: [
+      GoRoute(path: '/legal/licenses', builder: (context, state) => const LegalLicensesPage()),
       GoRoute(path: '/', redirect: (context, state) => widget.session.isAuthenticated ? '/groups' : '/login'),
       GoRoute(path: '/login', pageBuilder: (context, state) => NoTransitionPage<void>(
         key: const ValueKey('login'),

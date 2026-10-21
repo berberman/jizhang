@@ -1,7 +1,7 @@
 # Jizhang
 
-Jizhang is a shared expense, income and payment ledger with a Flutter web client,
-a same-origin admin console and a Haskell Servant API backed by PostgreSQL.
+Jizhang is a self-hosted shared expense, income and payment ledger with a Flutter
+web client, a same-origin admin console and a Haskell Servant API backed by PostgreSQL.
 
 - Track expenses, shared income and payments using equal, weighted, percentage
   or exact splits.
@@ -40,6 +40,7 @@ manual setup and safe testing.
 - [Flutter client development](client/README.md)
 - [Deployment](docs/deployment.md): container images, Compose, static hosting
   and Kubernetes integration
+- [Advanced configuration](docs/configuration.md): optional environment overrides
 - [Authentication](docs/authentication.md): accounts, OIDC, sessions and
   operator configuration
 - [Ledger behavior](docs/ledger.md): currencies, records, queries, balances
@@ -47,6 +48,8 @@ manual setup and safe testing.
 - [Haskell architecture](docs/architecture.md): module ownership and
   dependency rules
 - [Changelog](CHANGELOG.md)
+- [Self-hosted data handling](docs/privacy.md): stored data, access, and external services
+- [Open-source notices](docs/licenses.md): client notices and distribution requirements
 
 ## License
 

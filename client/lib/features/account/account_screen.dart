@@ -7,6 +7,7 @@ import '../../core/session_controller.dart';
 import '../../shared/branding.dart';
 import '../../shared/form_controller.dart';
 import '../../shared/widgets.dart';
+import '../../shared/legal.dart';
 import 'account_security_section.dart';
 
 class AccountScreen extends StatefulWidget {
@@ -189,6 +190,7 @@ class _AccountScreenState extends State<AccountScreen> {
           ],
         )),
         const SizedBox(height: 16),
+        LegalLinks(disabled: _busy || (widget.authFlow?.pending ?? false)),
         const AppVersionLabel(),
       ])),
     )));

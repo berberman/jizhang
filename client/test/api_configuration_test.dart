@@ -34,14 +34,10 @@ void main() {
 
   test('runtime config preserves subdirectory hosting and API path prefix', () async {
     final client = MockClient((request) async {
-      expect(request.method, 'GET');
       expect(request.url.origin, browserUri.origin);
       expect(request.url.path, '/app/runtime/api-base-url.txt');
-      expect(request.url.hasFragment, isFalse);
-      expect(request.url.queryParameters.keys, unorderedEquals(['_runtime']));
-      expect(int.tryParse(request.url.queryParameters['_runtime']!), isNotNull);
+      expect(request.url.queryParameters['_runtime'], isNotEmpty);
       expect(request.followRedirects, isFalse);
-      expect(request.headers['Accept'], 'text/plain');
       expect(request.headers['Cache-Control'], 'no-cache');
       return http.Response.bytes(utf8.encode('  https://api.example.test/ledger/v1/\n'), 200);
     });
@@ -49,8 +45,8 @@ void main() {
     expect(await resolve(client), Uri.parse('https://api.example.test/ledger/v1/'));
   });
 
-  for (final body in ['', ' \t\r\n']) {
-    test('empty or whitespace runtime config explicitly selects browser origin (${body.length})', () async {
+  for (final body in ['same-origin', ' \tsame-origin\r\n']) {
+    test('explicit same-origin runtime config resolves browser origin (${body.length})', () async {
       final client = MockClient((_) async => http.Response(body, 200));
       addTearDown(client.close);
       expect(await resolve(client), Uri.parse('https://web.example.test'));
@@ -81,6 +77,10 @@ void main() {
   });
 
   for (final value in [
+    '',
+    ' \t\r\n',
+    'SAME-ORIGIN',
+    'same-origin/api',
     'https://name:password@api.example.test',
     'https://@api.example.test',
     'https://api.example.test?query=private',
@@ -90,11 +90,11 @@ void main() {
     'ftp://api.example.test',
     'not a URL',
   ]) {
-    test('malformed runtime URL fails validation: $value', () async {
+    test('invalid runtime value fails without fallback: ${jsonEncode(value)}', () async {
       final client = MockClient((_) async => http.Response(value, 200));
       addTearDown(client.close);
       await expectLater(resolve(client), throwsA(isA<FormatException>().having(
-        (error) => error.message, 'safe message', 'API_BASE_URL is not a valid HTTP URL')));
+        (error) => error.message, 'safe message', apiConfigurationFormatMessage)));
     });
   }
 

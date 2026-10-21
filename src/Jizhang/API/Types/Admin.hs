@@ -5,6 +5,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE InstanceSigs #-}
 
 -- | Operator credentials and privileged ledger requests. JSON uses literal field
 -- names; generic decoders here accept extra keys unless a custom decoder rejects them.
@@ -178,6 +179,7 @@ data AuthAdmin = AuthAdmin
 -- | Require claim presence before decoding the payload. This method alone does
 -- not verify signatures or compare the expiration timestamp with the current time.
 instance FromJWT AuthAdmin where
+  decodeJWT :: Jose.ClaimsSet -> Either Text AuthAdmin
   decodeJWT claims = case claims ^. Jose.claimExp of
     Nothing -> Left "Missing 'exp' claim"
     Just _ ->

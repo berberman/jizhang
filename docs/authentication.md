@@ -52,17 +52,15 @@ Authentication storage is a fresh-schema cutover, not an in-place migration. Dep
 
 ### Database or environment authority
 
-Authentication settings default to database ownership. To manage the complete provider and signup policy at every backend startup, set `AUTH_CONFIG_SOURCE=environment` and explicitly set all three booleans to `true` or `false`:
+Configure providers and signup policy in the admin console by default. The
+environment need not contain `AUTH_CONFIG_SOURCE` or provider settings.
 
-- `OIDC_ENABLED`
-- `LOCAL_REGISTRATION_ENABLED`
-- `SSO_REGISTRATION_ENABLED`
-
-Provider fields are `OIDC_PROVIDER_NAME` (default `Authentik`), `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`. Empty nullable values clear saved values. Enabled SSO requires all credentials, valid runtime URLs and the stable encryption key. Disabling a linked provider must retain its issuer/client ID until identities are explicitly unlinked. Provider secrets stay backend-only and encrypted at rest.
-
-Environment ownership makes operator authentication settings read-only, including unsaved connection testing. Identical restarts preserve revision, ciphertext and live grants. Actual changes invalidate provider-bound grants; disabling revokes SSO sessions without disabling password sign-in. Failed startup reconciliation serves no application.
-
-All instances sharing a database must use the same configuration. Start with one backend replica and recreate it for changes rather than rolling through mixed configurations. To return authority to the database, set `AUTH_CONFIG_SOURCE=database` and remove or empty all seven provider/policy variables listed above. The last committed settings remain, and admin editing returns. Nonempty managed values in database mode fail rather than being ignored. Hand-back does not restore older defaults.
+Automated deployments can use `AUTH_CONFIG_SOURCE=environment` to make startup
+configuration authoritative and admin editing read-only. Policy booleans remain
+explicit, provider secrets stay backend-only, and stale/mixed configurations are
+rejected rather than silently combined. See the consolidated
+[environment-owned authentication reference](configuration.md#environment-owned-authentication)
+for settings, validation, restart behavior, and handing control back to the database.
 
 ## Operator management
 

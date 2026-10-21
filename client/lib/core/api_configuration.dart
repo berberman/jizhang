@@ -5,6 +5,8 @@ import 'package:http/http.dart' as http;
 import 'api_client.dart';
 
 const apiConfigurationLoadMessage = 'Could not load API configuration. Reload to retry.';
+const apiConfigurationFormatMessage =
+    'API configuration must be same-origin or an absolute HTTP(S) URL without credentials, query or fragment';
 
 class ApiConfigurationException implements Exception {
   const ApiConfigurationException();
@@ -43,9 +45,14 @@ Future<Uri> resolveApiBase({
     // No URL, response body, or underlying transport diagnostics reach the UI.
     throw const ApiConfigurationException();
   }
+  if (value == 'same-origin') return parseApiBase('', browserUri);
   // Uri.parse normalizes away an empty user-info marker before validation.
-  if (value.contains('@')) {
-    throw const FormatException('API_BASE_URL is not a valid HTTP URL');
+  if (value.isEmpty || value.contains('@')) {
+    throw const FormatException(apiConfigurationFormatMessage);
   }
-  return parseApiBase(value, browserUri);
+  try {
+    return parseApiBase(value, browserUri);
+  } on FormatException {
+    throw const FormatException(apiConfigurationFormatMessage);
+  }
 }

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/auth_flow_controller.dart';
 import '../../core/models.dart';
 import '../../shared/widgets.dart';
+import '../../shared/legal.dart';
 
 class OidcCallbackScreen extends StatefulWidget {
   const OidcCallbackScreen({super.key, required this.flow, required this.location});
@@ -127,6 +128,7 @@ class _OidcCallbackScreenState extends State<OidcCallbackScreen> {
             }, child: Text(_accountFlow ? 'Back to Account' : 'Restart sign-in')),
           ],
           TextButton(onPressed: _cancel, child: const Text('Cancel')),
+          LegalLinks(disabled: _loading || flow.pending),
         ]),
       )),
     )));

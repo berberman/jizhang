@@ -87,7 +87,7 @@ in
     '';
     config = configDefaults // {
       User = "1000:1000";
-      Env = [ "PATH=/bin" "API_BASE_URL=" ];
+      Env = [ "PATH=/bin" "API_BASE_URL=same-origin" ];
       Entrypoint = [ "/usr/local/bin/start-web" ];
       Healthcheck = healthDefaults // {
         Test = [

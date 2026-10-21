@@ -22,7 +22,7 @@ SOURCE_FILES = (
 )
 SOURCE_DIRECTORIES = (
     "app", "src", "test", "sql", "ui", "data", "nix", "docker",
-    "client/lib", "client/web",
+    "client/lib", "client/web", "client/assets",
 )
 SKIPPED_NAMES = frozenset({
     "__pycache__", "build", "dist", "dist-newstyle", "target", "node_modules",

@@ -376,6 +376,7 @@ void main() {
         }
         expect(tester.widget<TextButton>(find.widgetWithText(TextButton,
           register ? 'Already have an account? Sign in' : 'Create an account')).enabled, isTrue);
+        await tester.ensureVisible(find.widgetWithText(FilledButton, register ? 'Create account' : 'Sign in'));
         await tester.tap(find.widgetWithText(FilledButton, register ? 'Create account' : 'Sign in'));
         await tester.pumpAndSettle();
         expect(h.requests.where((r) => r.url.path.endsWith(register ? '/register' : '/login')), hasLength(1));
@@ -1406,6 +1407,27 @@ void main() {
     }
   }
 
+  for (final register in [false, true]) {
+    testWidgets('licenses modal preserves ${register ? 'signup' : 'login'} drafts', (tester) async {
+      final h = _Harness((request) async => _accountResponse(request, _authentication()));
+      await _openAuth(tester, h, register: register);
+      await tester.ensureVisible(find.widgetWithText(TextButton, 'Open-source licenses'));
+      await tester.tap(find.widgetWithText(TextButton, 'Open-source licenses'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(LicensePage), findsOneWidget);
+      await tester.tap(find.widgetWithText(TextButton, 'Close licenses'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextFormField>(_profileField(register ? 'Username' : 'Username or email')).controller!.text, 'alice-local');
+      expect(tester.widget<TextFormField>(_profileField('Password')).controller!.text, 'alice-local-password');
+      if (register) {
+        expect(tester.widget<TextFormField>(_profileField('Display name')).controller!.text, 'Alice local draft');
+        expect(tester.widget<TextFormField>(_profileField('Email')).controller!.text, 'alice-local@example.test');
+      }
+      expect(h.requests.where((request) => request.url.path.endsWith('/register') || request.url.path.endsWith('/login')), isEmpty);
+    });
+  }
+
   testWidgets('failed options offers Retry without enabling signup or blocking local login', (tester) async {
     var available = false;
     final h = _Harness((_) async => available ? _json({
@@ -1542,6 +1564,15 @@ void main() {
     await tester.enterText(find.byType(TextFormField).at(0), 'chosen_alice');
     await tester.enterText(find.byType(TextFormField).at(1), 'Chosen Alice');
     await tester.enterText(find.byType(TextFormField).at(2), 'chosen@example.test');
+    await tester.ensureVisible(find.widgetWithText(TextButton, 'Open-source licenses'));
+    await tester.tap(find.widgetWithText(TextButton, 'Open-source licenses'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.widgetWithText(TextButton, 'Close licenses'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextFormField>(find.byType(TextFormField).at(1)).controller!.text, 'Chosen Alice');
+    expect(h.requests.where((request) => request.url.path.endsWith('/exchange')), hasLength(1));
+    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Create account with Example provider'));
     await tester.tap(find.widgetWithText(FilledButton, 'Create account with Example provider'));
     await tester.pumpAndSettle();
     expect(find.text('Username is already in use'), findsOneWidget);

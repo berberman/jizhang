@@ -62,6 +62,7 @@ type AdminUIAPI =
     :<|> "admin-ui" :> "money.js" :> Get '[JavaScript] LBS.ByteString
     :<|> "admin-ui" :> "statistics.js" :> Get '[JavaScript] LBS.ByteString
     :<|> "admin-ui" :> "jizhang-mark.svg" :> Get '[SVG] LBS.ByteString
+    :<|> "legal" :> "licenses" :> Get '[HTML] LBS.ByteString
 
 adminUIServer :: ServerT AdminUIAPI MyHandler
 adminUIServer =
@@ -71,6 +72,7 @@ adminUIServer =
     :<|> serveUIFile "money.js"
     :<|> serveUIFile "statistics.js"
     :<|> serveMark
+    :<|> serveUIFile "licenses.html"
 
 adminVersion :: LT.Text
 adminVersion = LT.pack (showVersion version)
