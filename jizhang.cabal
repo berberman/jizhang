@@ -13,12 +13,12 @@ copyright:       2025 Potato Hatsue
 build-type:      Simple
 extra-doc-files: CHANGELOG.md
 data-files:
+  client/web/jizhang-mark.svg
+  data/currencies.json
   sql/*.sql
+  ui/*.css
   ui/*.html
   ui/*.js
-  ui/*.css
-  data/currencies.json
-  client/web/jizhang-mark.svg
 
 common opts
   ghc-options:      -Wall
@@ -28,21 +28,21 @@ common opts
 library
   import:          opts
   hs-source-dirs:  src
-  autogen-modules:
-    Paths_jizhang
+  autogen-modules: Paths_jizhang
   other-modules:
-    Paths_jizhang
+    Jizhang.API.Group.Projection
     Jizhang.API.Internal.Error
     Jizhang.API.Internal.Resource
-    Jizhang.API.User.Account
-    Jizhang.API.User.Projection
-    Jizhang.API.Group.Projection
     Jizhang.API.Record.Input
     Jizhang.API.Record.Projection
     Jizhang.API.Record.Service
+    Jizhang.API.User.Account
+    Jizhang.API.User.Projection
+    Paths_jizhang
+
   exposed-modules:
     Jizhang.API
-    Jizhang.API.App
+    Jizhang.API.AccountAuthentication
     Jizhang.API.Admin
     Jizhang.API.Admin.Authentication
     Jizhang.API.Admin.Common
@@ -50,51 +50,43 @@ library
     Jizhang.API.Admin.Users
     Jizhang.API.AdminAuth
     Jizhang.API.AdminUI
-    Jizhang.API.Common
+    Jizhang.API.App
     Jizhang.API.Auth
+    Jizhang.API.Common
+    Jizhang.API.ExchangeRate
     Jizhang.API.Group
     Jizhang.API.GroupImport
-    Jizhang.API.Receipt
-    Jizhang.API.Record
-    Jizhang.API.AccountAuthentication
     Jizhang.API.Invitation
     Jizhang.API.Logout
     Jizhang.API.OIDC
+    Jizhang.API.Receipt
+    Jizhang.API.Record
     Jizhang.API.Report
     Jizhang.API.RequestProtection
     Jizhang.API.Statistics
-    Jizhang.API.ExchangeRate
     Jizhang.API.Types
     Jizhang.API.Types.Admin
     Jizhang.API.Types.Auth
     Jizhang.API.Types.Common
-    Jizhang.API.Types.Group
     Jizhang.API.Types.ExchangeRate
+    Jizhang.API.Types.Group
     Jizhang.API.Types.Money
+    Jizhang.API.Types.OIDC
     Jizhang.API.Types.Receipt
     Jizhang.API.Types.Record
     Jizhang.API.Types.Report
     Jizhang.API.Types.Statistics
     Jizhang.API.Types.User
-    Jizhang.API.Types.OIDC
     Jizhang.API.User
-    Jizhang.Currency
-    Jizhang.Config
-    Jizhang.Money
-    Jizhang.RecordQuery
-    Jizhang.RequestProtection
-    Jizhang.ExchangeRate
-    Jizhang.Report.Balance
-    Jizhang.Report.Statistics
-    Jizhang.Report.Markdown
-    Jizhang.OIDC
-    Jizhang.Auth.Session
     Jizhang.Auth.Context
     Jizhang.Auth.Security
+    Jizhang.Auth.Session
+    Jizhang.Config
+    Jizhang.Currency
     Jizhang.Database
     Jizhang.Database.Admin
-    Jizhang.Database.Auth
     Jizhang.Database.AdminAuthentication
+    Jizhang.Database.Auth
     Jizhang.Database.Connection
     Jizhang.Database.ExchangeRate
     Jizhang.Database.Group
@@ -103,53 +95,60 @@ library
     Jizhang.Database.Record
     Jizhang.Database.Schema
     Jizhang.Database.User
+    Jizhang.ExchangeRate
+    Jizhang.Money
+    Jizhang.OIDC
+    Jizhang.RecordQuery
+    Jizhang.Report.Balance
+    Jizhang.Report.Markdown
+    Jizhang.Report.Statistics
+    Jizhang.RequestProtection
 
   build-depends:
     , aeson
     , base64-bytestring
-    , crypton
-    , memory
-    , network-uri
-    , iproute >=1.7 && <1.8
-    , network
-    , oidc-client ==0.8.0.0
-    , jose
-    , lens
-    , jose-jwt ==0.10.0
-     , bcrypt
+    , bcrypt
     , beam-core             ^>=0.10.4
     , beam-postgres         ^>=0.5.4
     , bytestring
-    , email-validate >=2.3 && <2.4
-     , cassava
-     , containers
-     , cookie
-     , filepath
-     , http-media
-     , http-client
-     , http-client-tls
-     , http-types
+    , cassava
+    , containers
+    , cookie
+    , crypton
+    , email-validate        >=2.3       && <2.4
+    , filepath
+    , http-client
+    , http-client-tls
+    , http-media
+    , http-types
+    , iproute               >=1.7       && <1.8
+    , jose
+    , jose-jwt              ==0.10.0
+    , lens
     , log-base              ^>=0.12.1
+    , memory
     , monad-control
     , mtl
-    , postgresql-simple     ^>=0.7.0.1
+    , network
+    , network-uri
+    , oidc-client           ==0.8.0.0
     , postgresql-libpq      ^>=0.11.0.0
+    , postgresql-simple     ^>=0.7.0.1
     , scientific
     , servant
     , servant-auth
     , servant-auth-server
     , servant-auth-swagger
-     , servant-server
-      , servant-swagger
-      , swagger2
-      , text
-      , time
+    , servant-server
+    , servant-swagger
+    , swagger2
+    , text
+    , time
     , transformers
     , transformers-base
     , uuid
     , wai
     , wai-cors              ^>=0.2.7
-    , wai-log
     , warp
 
 executable jizhang
@@ -158,75 +157,76 @@ executable jizhang
   ghc-options:    -threaded
   hs-source-dirs: app
   build-depends:
-     , beam-postgres
-     , bytestring
-     , containers
-     , http-client
-     , http-client-tls
-     , jizhang
-     , log-base             ^>=0.12.1
-     , postgresql-simple
-     , servant-auth-server
-     , text
-     , unix
-     , warp
+    , beam-postgres
+    , bytestring
+    , containers
+    , http-client
+    , http-client-tls
+    , jizhang
+    , log-base             ^>=0.12.1
+    , postgresql-simple
+    , servant-auth-server
+    , text
+    , unix
+    , warp
 
 test-suite jizhang-tests
   import:         opts
   type:           exitcode-stdio-1.0
   main-is:        Main.hs
   other-modules:
+    AdminAuthenticationTest
     APITest
-    RequestProtectionTest
-    RequestProtectionCredentialTest
-    CurrencyTest
-    ConfigTest
-    DatabaseRecoveryTest
-    ExchangeRateTest
-    ExchangeQuoteTest
-    MoneyTest
-    ReportTest
-    RecordQueryTest
-    StatisticsTest
-    OIDCProvider
-    OIDCTest
-    OIDCDtoTest
+    AuthAccountTest
     AuthLogTest
     AuthSessionTest
-    OIDCFlowTest
-    AuthAccountTest
-    LogoutTest
-    AdminAuthenticationTest
+    ConfigTest
+    CurrencyTest
+    DatabaseRecoveryTest
     EnvironmentAuthenticationTest
+    ExchangeQuoteTest
+    ExchangeRateTest
+    LogoutTest
+    MoneyTest
+    OIDCDtoTest
+    OIDCFlowTest
+    OIDCProvider
+    OIDCTest
+    RecordQueryTest
+    ReportTest
+    RequestProtectionCredentialTest
+    RequestProtectionTest
+    StatisticsTest
     Utils
 
   hs-source-dirs: test
   build-depends:
     , aeson
+    , base64-bytestring
+    , beam-postgres
     , bytestring
     , containers
-    , base64-bytestring
-    , jose
-    , jose-jwt ==0.10.0
-    , wai
-    , iproute >=1.7 && <1.8
-    , network
-    , network-uri
     , http-client
     , http-types
+    , iproute              >=1.7     && <1.8
     , jizhang
+    , jose
+    , jose-jwt             ==0.10.0
     , log-base             ^>=0.12.1
+    , network
+    , network-uri
     , postgresql-simple
     , scientific
     , servant-auth
     , servant-auth-client
     , servant-auth-server
     , servant-client
-      , servant-client-core
-      , servant-server
-      , tasty
-      , tasty-hunit
-      , text
-      , time
-      , uuid
-      , warp
+    , servant-client-core
+    , servant-server
+    , tasty
+    , tasty-hunit
+    , text
+    , time
+    , uuid
+    , wai
+    , warp

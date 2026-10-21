@@ -12,13 +12,17 @@ import qualified Data.Aeson.KeyMap as KM
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Data.Time (UTCTime (..), diffTimeToPicoseconds, getCurrentTime, picosecondsToDiffTime)
 import Database.PostgreSQL.Simple (Only (..), execute_, query_)
 import qualified Jizhang.API.Types.Auth as Auth
 import qualified Jizhang.API.Types.OIDC as DTO
 import Jizhang.Auth.Security (pkceChallenge, randomToken)
+import Jizhang.API.App (AppEnv (appAuthRuntime))
+import qualified Jizhang.OIDC as O
 import qualified Network.HTTP.Client as HTTP
 import Network.HTTP.Types.Status (statusCode)
 import Network.HTTP.Types.URI (parseSimpleQuery)
@@ -72,6 +76,21 @@ logoutTests =
         getUrl h callback True >>= expectStatus 400
         active h sso 401
         active h local 200,
+      testCase "provider logout accepts a nanosecond clock and returns a usable handoff" $ do
+        time <- getCurrentTime >>= newIORef
+        let configure env = env {appAuthRuntime = (appAuthRuntime env) {O.authClock = readIORef time}}
+        withHarnessConfigured configure $ \h -> do
+          void $ localAccount h
+          sso <- linkLocal h
+          now <- getCurrentTime
+          let wholeMicros = diffTimeToPicoseconds (utctDayTime now) `div` 1000000
+              precise = now {utctDayTime = picosecondsToDiffTime (wholeMicros * 1000000 + 123456)}
+          writeIORef time precise
+          response <- protected h sso "/users/me/oidc/logout" Null
+          expectStatus 200 response
+          DTO.ProviderLogoutResponse url <- decodeResponse response
+          active h sso 401
+          getUrl h url True >>= expectStatus 303,
       testCase "unavailable provider logout reports failure after committing local revocation" $ withHarness $ \h -> do
         local <- localAccount h
         protected h local "/users/me/oidc/logout" Null >>= expectStatus 503

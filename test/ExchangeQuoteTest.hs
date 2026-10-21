@@ -14,11 +14,15 @@ import Control.Monad (forM_, void)
 import Data.Aeson (object, toJSON, (.=))
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import qualified Data.Text as T
+import Data.Time (UTCTime)
 import qualified Data.UUID as UUID
+import Database.Beam.Postgres (runBeamPostgres)
 import Database.PostgreSQL.Simple (Only (..), query_)
 import Jizhang.API.App (AppEnv (appFetchReferenceRate))
 import Jizhang.API.Types
 import qualified Jizhang.API.Types.ExchangeRate as Q
+import qualified Jizhang.Database.ExchangeRate as DQ
+import qualified Jizhang.Database.Schema as S
 import qualified Jizhang.ExchangeRate as FX
 import qualified Network.HTTP.Client as HC
 import Network.HTTP.Types.Status
@@ -79,6 +83,17 @@ exchangeQuoteTests =
           assertEqual "explicit admin fetch" 3 =<< readIORef calls
           persisted <- query_ conn "SELECT count(*) FROM exchange_quotes" :: IO [Only Int]
           persisted @?= [Only 3],
+      testCase "nanosecond quote timestamps return the stored microsecond snapshot" $
+        withTestAppServer Nothing id $ \env _ _ conn -> do
+          token <- setupUser env "owner"
+          group <- runClient env $ cCreateGroup (mkTC token) "Timestamp precision"
+          let GroupId gid = grpId group
+              fetched = read "2026-10-14 12:34:56.123456789 UTC" :: UTCTime
+              persisted = read "2026-10-14 12:34:56.123457 UTC" :: UTCTime
+          quote <- runBeamPostgres conn $ DQ.insertExchangeQuote gid "EUR" "USD" 1.2 (read "2026-10-14") fetched
+          assertEqual "response exposes PostgreSQL precision" persisted (S._quoteFetchedAt quote)
+          stored <- runBeamPostgres conn $ DQ.getExchangeQuote gid (S._quoteId quote)
+          assertEqual "creation and reread share one immutable snapshot" (Just quote) stored,
       testCase "authorization and non-conversion requests fail before external I/O" $ do
         calls <- newIORef (0 :: Int)
         let provider _ _ = atomicModifyIORef' calls (\n -> (n + 1, Left FX.ProviderUnavailable))

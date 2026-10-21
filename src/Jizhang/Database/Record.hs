@@ -13,7 +13,7 @@ import Data.Time (Day, UTCTime, getCurrentTime)
 import Data.UUID (UUID)
 import Data.UUID.V4 (nextRandom)
 import Database.Beam
-import Database.Beam.Backend.SQL.BeamExtensions (runUpdateReturningList)
+import Database.Beam.Backend.SQL.BeamExtensions (runInsertReturningList, runUpdateReturningList)
 import Database.Beam.Postgres
 import Jizhang.Database.Schema
 
@@ -96,9 +96,12 @@ insertSplitRecord kind groupId receiptId expense = do
             _createdAt = now,
             _recordReceipt = maybe nothing_ (just_ . ReceiptId) receiptId
           }
-  runInsert $ insert (_records jizhangDb) $ insertValues [record]
-  splits <- forM (resolvedSplits expense) (insertResolvedSplit recordId)
-  pure (record, splits)
+  inserted <- runInsertReturningList $ insert (_records jizhangDb) $ insertValues [record]
+  case inserted of
+    [storedRecord] -> do
+      splits <- forM (resolvedSplits expense) (insertResolvedSplit recordId)
+      pure (storedRecord, splits)
+    _ -> liftIO $ ioError $ userError "Expected one inserted split record"
 
 -- | Replace allocations only after matching group, UUID and split-record kind.
 -- A mismatch is a no-op; atomic delete/reinsert requires the caller's transaction.
@@ -169,8 +172,10 @@ insertTransferRecord groupId transfer = do
             _createdAt = now,
             _recordReceipt = nothing_
           }
-  runInsert $ insert (_records jizhangDb) $ insertValues [record]
-  pure record
+  inserted <- runInsertReturningList $ insert (_records jizhangDb) $ insertValues [record]
+  case inserted of
+    [storedRecord] -> pure storedRecord
+    _ -> liftIO $ ioError $ userError "Expected one inserted transfer record"
 
 -- | Update only a transfer in the supplied group, preserving UUID and creation
 -- time. A missing row or a split-record UUID produces no update.

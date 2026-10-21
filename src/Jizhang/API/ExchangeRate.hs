@@ -96,4 +96,4 @@ createQuote actorId (GroupId gid) (Q.ExchangeQuoteRequest sourceCode) = do
       quoteRate
       "frankfurter"
       effectiveDate
-      fetchedTime
+      (S._quoteFetchedAt quote)

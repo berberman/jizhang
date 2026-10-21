@@ -91,14 +91,14 @@ createReceipt authUser (GroupId gId) CreateReceiptRequest {..} = do
 
 getReceipts :: AuthUser -> GroupId -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> MyHandler (PaginatedResponse Receipt)
 getReceipts authUser (GroupId gId) mQuery mOffset mLimit mSort = do
-  logInfo_ $ "Listing receipts in group " <> toText gId
+  logTrace_ $ "Listing receipts in group " <> toText gId
   ensureGroupMember (authUserId authUser) gId
   receipts <- getReceiptsByGroupId gId
   pure $ paginateResponse mOffset mLimit mQuery mSort sortReceipts $ filterReceipts mQuery receipts
 
 getReceipt :: AuthUser -> GroupId -> ReceiptId -> MyHandler Receipt
 getReceipt authUser (GroupId gId) (ReceiptId rId) = do
-  logInfo_ $ "Fetching receipt " <> toText rId <> " in group " <> toText gId
+  logTrace_ $ "Fetching receipt " <> toText rId <> " in group " <> toText gId
   ensureGroupExists gId
   ensureGroupMember (authUserId authUser) gId
   receipt <- fetchOrFail "Receipt" rId $ runDB (D.getReceipt gId rId)

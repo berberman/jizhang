@@ -4,14 +4,14 @@
 -- PostgreSQL. Logger queues are drained before searching captured output.
 module AuthLogTest (authLogTests) where
 
-import APITest (setupAdmin, withTestAppServerLogger, withTestAppServerLoggerEnv)
+import APITest (setupAdmin, setupUser, withTestAppServerLogger, withTestAppServerLoggerEnv)
 import Control.Exception (SomeException, bracket, displayException, try)
 import Control.Monad (forM_, void)
 import Data.Aeson (eitherDecode, encode, object, (.=))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base64 as B64
 import qualified Data.ByteString.Lazy as LBS
-import Data.IORef (atomicModifyIORef', newIORef, readIORef)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Database.PostgreSQL.Simple (Only (..), query_)
@@ -20,6 +20,7 @@ import Jizhang.API.App (AppEnv (..))
 import Jizhang.API.Types (AdminBootstrap (..))
 import Jizhang.API.Types.Auth (LoginResponse (..))
 import Jizhang.Config (EnvironmentAuthentication (..), parseJWTSettings)
+import Jizhang.Database.Connection (closeConnectionManager)
 import qualified Jizhang.OIDC as O
 import Jizhang.RequestProtection
   ( RatePolicy (..),
@@ -27,9 +28,10 @@ import Jizhang.RequestProtection
     defaultRequestProtectionConfig,
     newRequestProtection,
   )
-import Log (mkLogger, runLogT, showLogMessage, shutdownLogger, waitForLogger)
+import Log (LogLevel (..), mkLogger, runLogT, showLogMessage, shutdownLogger, waitForLogger)
 import qualified Network.HTTP.Client as HTTP
 import Network.HTTP.Types.Status (statusCode)
+import Network.Wai.Handler.Warp (withApplication)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
 
@@ -39,7 +41,62 @@ authLogTests :: TestTree
 authLogTests =
   testGroup
     "Authentication diagnostic privacy"
-    [ testCase "credential SQL and authentication request values are absent while ordinary diagnostics remain" $ do
+    [ testCase "ambient thresholds filter handler SQL and retain access and failure diagnostics" $
+        forM_ [LogAttention, LogInfo, LogTrace] $ \level -> do
+          messages <- newIORef []
+          let collect message = atomicModifyIORef' messages (\old -> (showLogMessage Nothing message : old, ()))
+          bracket (mkLogger "threshold-capture" collect) shutdownLogger $ \logger ->
+            withTestAppServerLoggerEnv logger Nothing id $ \env clientEnv _ manager _ -> do
+              token <- setupUser clientEnv "threshold-user"
+              application <- runLogT "threshold" logger level (API.app env)
+              waitForLogger logger
+              writeIORef messages []
+              withApplication (pure application) $ \port -> do
+                let send path = do
+                      request <- HTTP.parseRequest ("http://127.0.0.1:" <> show port <> path)
+                      HTTP.httpLbs request
+                        { HTTP.requestHeaders = [("Authorization", "Bearer " <> TE.encodeUtf8 token)],
+                          HTTP.redirectCount = 0
+                        } manager
+                    login = do
+                      request <- HTTP.parseRequest ("http://127.0.0.1:" <> show port <> "/auth/login")
+                      HTTP.httpLbs request
+                        { HTTP.method = "POST",
+                          HTTP.requestHeaders = [("Content-Type", "application/json")],
+                          HTTP.requestBody = HTTP.RequestBodyLBS "{\"loginIdentifier\":\"threshold-user\",\"loginPassword\":\"wrong-password\"}"
+                        } manager
+                groups <- send "/users/me/groups"
+                assertEqual "ordinary database handler succeeds" 200 (statusCode $ HTTP.responseStatus groups)
+                currencies <- send "/currencies"
+                assertEqual "metadata handler succeeds" 200 (statusCode $ HTTP.responseStatus currencies)
+                missing <- send "/missing-log-route"
+                assertEqual "missing route retains status" 404 (statusCode $ HTTP.responseStatus missing)
+                rejected <- login
+                assertEqual "sensitive handler runs" 401 (statusCode $ HTTP.responseStatus rejected)
+                waitForLogger logger
+                ordinary <- readIORef messages
+                let captured = T.unlines ordinary
+                assertEqual "SQL follows ambient Trace threshold" (level == LogTrace) ("SELECT " `T.isInfixOf` captured)
+                assertEqual "sensitive handlers inherit ambient threshold" (level >= LogInfo) ("Local password login attempt" `T.isInfixOf` captured)
+                assertEqual "one ordinary completion per response" (if level >= LogInfo then 3 else 0)
+                  (length $ filter (T.isInfixOf "HTTP request completed") ordinary)
+                if level >= LogInfo
+                  then do
+                    assertBool "method, successful path and status retained" ("HTTP request completed GET /currencies 200" `T.isInfixOf` captured)
+                    assertBool "missing path and status retained" ("HTTP request completed GET /missing-log-route 404" `T.isInfixOf` captured)
+                  else assertEqual "quiet threshold emits no routine diagnostics" [] ordinary
+                writeIORef messages []
+                closeConnectionManager (appConn env)
+                unavailable <- send "/users/me/groups"
+                assertEqual "ordinary failure response" 503 (statusCode $ HTTP.responseStatus unavailable)
+                sensitiveUnavailable <- login
+                assertEqual "sensitive failure response" 503 (statusCode $ HTTP.responseStatus sensitiveUnavailable)
+                waitForLogger logger
+                failures <- T.unlines <$> readIORef messages
+                assertBool "important persistence diagnostic survives every threshold" ("Database unavailable" `T.isInfixOf` failures)
+                assertBool "ordinary server failure completion survives every threshold" ("HTTP request completed GET /users/me/groups 503" `T.isInfixOf` failures)
+                assertBool "sensitive server failure status survives every threshold" ("Authentication request completed 503" `T.isInfixOf` failures),
+      testCase "credential SQL and authentication request values are absent while ordinary diagnostics remain" $ do
         messages <- newIORef []
         let collect message = atomicModifyIORef' messages (\old -> (showLogMessage Nothing message : old, ()))
         bracket (mkLogger "auth-capture" collect) shutdownLogger $ \logger -> do
@@ -76,8 +133,12 @@ authLogTests =
               $ \path -> do
                 request <- HTTP.parseRequest ("http://127.0.0.1:" <> show port <> path)
                 void $ HTTP.httpLbs request {HTTP.redirectCount = 0} manager
-            ordinary <- HTTP.parseRequest ("http://127.0.0.1:" <> show port <> "/currencies")
-            void $ HTTP.httpLbs ordinary manager
+            ordinary <- HTTP.parseRequest ("http://127.0.0.1:" <> show port <> "/currencies?search=ordinary-query-privacy-canary")
+            ordinaryResponse <- HTTP.httpLbs ordinary
+              { HTTP.requestHeaders = [("X-Privacy-Canary", "ordinary-header-privacy-canary")],
+                HTTP.requestBody = HTTP.RequestBodyLBS "ordinary-body-privacy-canary"
+              } manager
+            assertEqual "ordinary response succeeds" 200 (statusCode $ HTTP.responseStatus ordinaryResponse)
             waitForLogger logger
             captured <- T.unlines <$> readIORef messages
             forM_
@@ -88,6 +149,9 @@ authLogTests =
                 "synthetic-code-canary",
                 "synthetic-error-canary",
                 "synthetic-logout-canary",
+                "ordinary-query-privacy-canary",
+                "ordinary-header-privacy-canary",
+                "ordinary-body-privacy-canary",
                 token,
                 "$2a$",
                 "$2b$",

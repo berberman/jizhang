@@ -135,6 +135,11 @@ bearer user routes. Admin cookies and XSRF remain same-origin, so keep the admin
 console with its API. See [authentication](authentication.md) for the remaining
 backend authentication configuration.
 
+The executable logs at Info. Ordinary HTTP requests produce one completion
+message with method, path and status; routine reads and SQL require Trace.
+Queries, headers and bodies are omitted from access logs. Authentication routes
+log only completion status, and server failures use Attention.
+
 ## Verification
 
 Backend integration tests start real servers and drop/create PostgreSQL tables.
@@ -154,6 +159,8 @@ GitHub Actions runs the backend build and test suite and the Flutter tests and
 web build on pushes and pull requests. The [workflow](../.github/workflows/ci.yml)
 uses the pinned Nix environments and a disposable `jizhang_test` PostgreSQL
 database. It does not deploy applications or require repository secrets.
+Backend test output is shown only on failure; default test servers log at
+Attention, while diagnostic-privacy tests explicitly exercise more verbose levels.
 
 For Flutter doctor, analysis, tests, and release builds, use the
 [client verification commands](../client/README.md#verification).

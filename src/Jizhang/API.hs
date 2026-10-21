@@ -15,7 +15,8 @@ import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.Map.Strict as M
 import Data.Swagger (Swagger)
 import qualified Data.Text as T
-import Data.Text.Encoding (encodeUtf8)
+import Data.Text.Encoding (decodeUtf8With, encodeUtf8)
+import Data.Text.Encoding.Error (lenientDecode)
 import Data.Time (getCurrentTime)
 import Jizhang.API.Admin
 import Jizhang.API.Admin.Authentication (applyEnvironmentAuthentication)
@@ -34,10 +35,9 @@ import Jizhang.API.Types (AuthAdmin (authAdminId), AuthUser (authUserId), Curren
 import Jizhang.API.User
 import Jizhang.Auth.Session (requireActiveUserSession)
 import Jizhang.RequestProtection (Principal (..), requestProtectionMiddleware)
-import Log (LogLevel (LogInfo), LogT, LoggerEnv (leLogger), MonadLog (getLoggerEnv), getLoggerIO, logExceptions, runLogT)
+import Log (LogLevel (LogAttention, LogInfo), LogT, LoggerEnv (leLogger, leMaxLogLevel), MonadLog (getLoggerEnv), getLoggerIO, logExceptions, runLogT)
 import Network.HTTP.Types.Status (status400, statusCode)
-import Network.Wai (mapResponseHeaders, pathInfo, queryString, responseLBS, responseStatus)
-import Network.Wai.Log (mkLogMiddleware)
+import Network.Wai (mapResponseHeaders, pathInfo, queryString, rawPathInfo, requestMethod, responseLBS, responseStatus)
 import qualified Network.Wai.Middleware.Cors as Cors
 import Servant hiding (respond)
 import Servant.Auth.Server
@@ -130,14 +130,14 @@ app appEnv = do
         _ -> Nothing
       nat :: forall x. MyHandler x -> Handler x
       nat =
-        runLogT "jizhang" (leLogger env) maxBound
+        runLogT "jizhang" (leLogger env) (leMaxLogLevel env)
           . logExceptions
           . flip runReaderT appEnv
           . runMyHandler
       application = serveWithContext api ctx $ hoistServerWithContext api (Proxy :: Proxy AppContext) nat server
       -- Sensitive exceptions bypass logExceptions to avoid logging provider credentials.
       sensitiveNat :: forall x. MyHandler x -> Handler x
-      sensitiveNat = runLogT "jizhang" (leLogger env) maxBound . flip runReaderT appEnv . runMyHandler
+      sensitiveNat = runLogT "jizhang" (leLogger env) (leMaxLogLevel env) . flip runReaderT appEnv . runMyHandler
       sensitiveApplication = serveWithContext api ctx $ hoistServerWithContext api (Proxy :: Proxy AppContext) sensitiveNat server
       dispatch request respond
         | pathInfo request `elem` [["admin-ui"], ["admin-ui", ""]] =
@@ -161,7 +161,6 @@ app appEnv = do
       Left failure -> liftIO $ fail $ "Environment authentication configuration failed: " <> BL.unpack (errBody failure)
       Right () -> pure ()
   bootstrapAdmin appEnv
-  middleware <- mkLogMiddleware
   logger <- getLoggerIO
   pure $
     ( \request respond ->
@@ -169,7 +168,9 @@ app appEnv = do
           then admittedApplication request
             $ \response -> do
               now <- getCurrentTime
-              logger now LogInfo ("Authentication request completed " <> T.pack (show $ statusCode $ responseStatus response)) emptyObject
+              let code = statusCode $ responseStatus response
+                  level = if code >= 500 then LogAttention else LogInfo
+              logger now level ("Authentication request completed " <> T.pack (show code)) emptyObject
               respond $
                 mapResponseHeaders
                   ( \headers ->
@@ -178,7 +179,14 @@ app appEnv = do
                         : filter (\(name, _) -> name /= "Cache-Control" && name /= "Referrer-Policy") headers
                   )
                   response
-          else middleware (const admittedApplication) request respond
+          else admittedApplication request $ \response -> do
+            now <- getCurrentTime
+            let code = statusCode $ responseStatus response
+                level = if code >= 500 then LogAttention else LogInfo
+                message = "HTTP request completed " <> decodeUtf8With lenientDecode (requestMethod request)
+                  <> " " <> decodeUtf8With lenientDecode (rawPathInfo request) <> " " <> T.pack (show code)
+            logger now level message emptyObject
+            respond response
     )
   where
     -- QueryParams discards valueless entries; count raw occurrences before routing.

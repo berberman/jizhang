@@ -6,7 +6,7 @@
 -- provider revision, purpose and optional account/session/invitation snapshots.
 module Jizhang.API.OIDC (OIDCAPI, oidcServer, startAccountOidc) where
 
-import Control.Monad (unless, when)
+import Control.Monad (unless, void, when)
 import Control.Monad.Except (catchError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
@@ -486,7 +486,7 @@ issue settings row identity uid allowLink = do
       Just sid -> do
         -- Rotate the initiating session rather than silently upgrading its old bearer token.
         starting <- A.getUserSession sid >>= maybe A.abortAuthTransaction pure
-        A.revokeSession starting now
+        void $ A.revokeSession starting now
     A.insertUserSession session
     A.cleanupExpiredAuth now
   pure response

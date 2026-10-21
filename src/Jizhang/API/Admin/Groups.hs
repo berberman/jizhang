@@ -102,7 +102,7 @@ bulkDeleteGroups authAdmin (BulkRequest groupIds) =
 
 getGroupById :: AuthAdmin -> GroupId -> MyHandler Group
 getGroupById authAdmin gid = do
-  logInfo_ $ "Fetching group for admin: " <> authAdminUsername authAdmin
+  logTrace_ $ "Fetching group for admin: " <> authAdminUsername authAdmin
   getGroup gid
 
 updateGroup :: AuthAdmin -> GroupId -> UpdateGroupRequest -> MyHandler Group
@@ -215,12 +215,12 @@ addTransferRecord authAdmin (GroupId gid) req@TransferRecordRequest {..} = do
 
 getGroupRecords :: AuthAdmin -> GroupId -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> MyHandler (PaginatedResponse Record)
 getGroupRecords authAdmin gid query offset limit sort = do
-  logInfo_ $ "Fetching group records for admin: " <> authAdminUsername authAdmin
+  logTrace_ $ "Fetching group records for admin: " <> authAdminUsername authAdmin
   getRecordPage gid query offset limit sort
 
 getGroupRecord :: AuthAdmin -> GroupId -> RecordId -> MyHandler Record
 getGroupRecord authAdmin (GroupId gid) (RecordId rid) = do
-  logInfo_ $ "Fetching group record for admin: " <> authAdminUsername authAdmin
+  logTrace_ $ "Fetching group record for admin: " <> authAdminUsername authAdmin
   ensureGroupExists gid
   getAdminRecord gid rid
 
@@ -285,7 +285,7 @@ updateIncome authAdmin (GroupId gid) (RecordId rid) req = do
 getGroupReport :: AuthAdmin -> GroupId -> MyHandler Report
 getGroupReport authAdmin (GroupId gid) = do
   enforceExpensiveLimit (AdminPrincipal $ authAdminId authAdmin)
-  logInfo_ $ "Fetching group report for admin: " <> authAdminUsername authAdmin
+  logTrace_ $ "Fetching group report for admin: " <> authAdminUsername authAdmin
   getReportByGroupId gid
 
 -- | Require an active uploader and validated expense participants even for operators.
@@ -310,7 +310,7 @@ createReceipt authAdmin (GroupId gid) AdminCreateReceiptRequest {..} = do
 
 getGroupReceipts :: AuthAdmin -> GroupId -> MyHandler [Receipt]
 getGroupReceipts authAdmin (GroupId gid) = do
-  logInfo_ $ "Fetching group receipts for admin: " <> authAdminUsername authAdmin
+  logTrace_ $ "Fetching group receipts for admin: " <> authAdminUsername authAdmin
   getReceiptsByGroupId gid
 
 bulkDeleteReceipts :: AuthAdmin -> GroupId -> BulkRequest ReceiptId -> MyHandler NoContent

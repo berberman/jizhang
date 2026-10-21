@@ -8,7 +8,7 @@
 -- | App logout, one-use RP logout redirects and verified provider notifications.
 module Jizhang.API.Logout (LogoutAPI, logoutServer, OIDCLogoutAPI, oidcLogoutServer, LogoutForm (..)) where
 
-import Control.Monad (forM_, unless, when)
+import Control.Monad (forM_, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Data.ByteString (ByteString)
@@ -96,7 +96,7 @@ localLogout auth = do
   now <- clock
   runDBSensitiveTransaction $ do
     checkAccountSnapshot now user session identity
-    A.revokeSession session now
+    void $ A.revokeSession session now
   pure NoContent
 
 -- Revoke first, independently of runtime configuration or provider availability.
@@ -106,11 +106,11 @@ providerLogout auth = do
   (user, session, identity) <- currentAccount auth
   runtime <- asks appAuthRuntime
   now <- clock
-  settings <- runDBSensitiveTransaction $ do
+  (settings, revokedSession) <- runDBSensitiveTransaction $ do
     checkAccountSnapshot now user session identity
     row <- A.getAuthSettings
-    A.revokeSession session now
-    pure row
+    revoked <- A.revokeSession session now
+    pure (row, revoked)
   providerSettings <- either (const unavailable) pure (providerSettingsFromRow runtime settings)
   unless (S._sessionMethod session == "oidc" && S._sessionOidcIssuer session == Just (O.settingsIssuer providerSettings)) unavailable
   key <- maybe unavailable pure (O.authSecretKey runtime)
@@ -155,7 +155,8 @@ providerLogout auth = do
       ( currentSettings == settings
           && currentUser == Just user
           && currentIdentity == identity
-          && currentSession == Just (session {S._sessionRevokedAt = Just now})
+          -- Compare the returned row, not a clock value PostgreSQL may have rounded.
+          && currentSession == Just revokedSession
       )
       A.abortAuthTransaction
     A.cleanupExpiredAuth created

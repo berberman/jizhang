@@ -44,7 +44,7 @@ jobs:
       - name: Build
         run: nix develop .#backend --no-write-lock-file --command cabal build all --enable-tests
       - name: Test
-        run: nix develop .#backend --no-write-lock-file --command cabal test jizhang-tests --test-options='--num-threads=1' --test-show-details=direct
+        run: nix develop .#backend --no-write-lock-file --command cabal test jizhang-tests --test-options='--num-threads=1' --test-show-details=failures
 
   flutter:
     name: Flutter tests and web build

@@ -122,7 +122,7 @@ main =
             setInstallShutdownHandler installShutdown $
               setTimeout 30 $
                 setGracefulShutdownTimeout (Just 25) $
-                  setOnException (\_ _ -> runLogT "warp" logger maxBound $ logAttention_ "HTTP request failed") $
+                  setOnException (\_ _ -> runLogT "warp" logger LogInfo $ logAttention_ "HTTP request failed") $
                     setHost (fromString bindHost) $
                       setPort 8080 defaultSettings
       app' <- runLogT "jizhang" logger LogInfo $ app appEnv

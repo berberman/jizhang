@@ -120,7 +120,7 @@ createGroup authUser CreateGroupRequest {..} = do
 -- | Shared projection helper with no authorization check; protect it at the route boundary.
 getGroup :: GroupId -> MyHandler Group
 getGroup (GroupId gId) = do
-  logInfo_ $ "Fetching group with ID: " <> T.pack (show gId)
+  logTrace_ $ "Fetching group with ID: " <> T.pack (show gId)
   (g, ms) <- fetchOrFail "Group" gId $ runDB $ D.getGroupWithMembers gId
   um <- getGroupUserMap gId
   currencies <- asks appCurrencies

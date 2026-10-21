@@ -73,7 +73,7 @@ import Jizhang.Database.Init (createTables, dropTables)
 import qualified Jizhang.ExchangeRate as FX
 import Jizhang.OIDC (newAuthRuntime)
 import Jizhang.RequestProtection
-import Log (Logger, runLogT)
+import Log (LogLevel (LogAttention, LogTrace), Logger, runLogT)
 import Log.Backend.StandardOutput (withStdOutLogger)
 import Network.HTTP.Client (Manager, defaultManagerSettings, httpLbs, newManager, parseRequest)
 import qualified Network.HTTP.Client as HC
@@ -220,9 +220,9 @@ withTestAppWithBootstrap adminBootstrap action = withTestAppServer adminBootstra
 -- Setup and teardown drop tables, so this fixture requires the named disposable database.
 withTestAppServer :: Maybe AdminBootstrap -> (AppEnv -> AppEnv) -> (ClientEnv -> Int -> Manager -> Connection -> IO a) -> IO a
 withTestAppServer adminBootstrap configure action = withStdOutLogger $ \logger ->
-  withTestAppServerLogger logger adminBootstrap configure action
+  withTestAppServerLoggerEnvLevel LogAttention logger adminBootstrap configure (\_ -> action)
 
--- | Use a supplied logger without changing the destructive database lifecycle.
+-- | Supplied capture loggers receive Trace diagnostics without changing the database lifecycle.
 withTestAppServerLogger :: Logger -> Maybe AdminBootstrap -> (AppEnv -> AppEnv) -> (ClientEnv -> Int -> Manager -> Connection -> IO a) -> IO a
 withTestAppServerLogger logger adminBootstrap configure action =
   withTestAppServerLoggerEnv logger adminBootstrap configure (\_ -> action)
@@ -230,7 +230,10 @@ withTestAppServerLogger logger adminBootstrap configure action =
 -- | Also expose the configured environment for connection and runtime assertions.
 -- Each run gets fresh JWT keys; reference-rate fetching is unavailable unless overridden.
 withTestAppServerLoggerEnv :: Logger -> Maybe AdminBootstrap -> (AppEnv -> AppEnv) -> (AppEnv -> ClientEnv -> Int -> Manager -> Connection -> IO a) -> IO a
-withTestAppServerLoggerEnv logger adminBootstrap configure action = do
+withTestAppServerLoggerEnv = withTestAppServerLoggerEnvLevel LogTrace
+
+withTestAppServerLoggerEnvLevel :: LogLevel -> Logger -> Maybe AdminBootstrap -> (AppEnv -> AppEnv) -> (AppEnv -> ClientEnv -> Int -> Manager -> Connection -> IO a) -> IO a
+withTestAppServerLoggerEnvLevel level logger adminBootstrap configure action = do
   connStr <- fromMaybe "dbname=jizhang_test" . fmap pack <$> lookupEnv "TEST_DATABASE_URL"
   bracket (connectPostgreSQL connStr) close $ \conn -> do
     database <- query_ conn "SELECT current_database()" :: IO [Only Text]
@@ -268,7 +271,7 @@ withTestAppServerLoggerEnv logger adminBootstrap configure action = do
                   appCurrencies = currencies,
                   appFetchReferenceRate = \_ _ -> pure (Left FX.ProviderUnavailable)
                 }
-      waiApp <- runLogT "test" logger maxBound $ app appEnv
+      waiApp <- runLogT "test" logger level $ app appEnv
       manager <- newManager defaultManagerSettings
       withApplication (pure waiApp) $ \port -> do
         let env = mkClientEnv manager (BaseUrl Http "localhost" port "")

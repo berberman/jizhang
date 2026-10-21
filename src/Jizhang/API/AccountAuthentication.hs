@@ -10,7 +10,7 @@ module Jizhang.API.AccountAuthentication
   )
 where
 
-import Control.Monad (unless, when)
+import Control.Monad (unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Crypto.BCrypt (validatePassword)
@@ -100,7 +100,7 @@ reauthenticate auth (DTO.ReauthenticateRequest password) = do
   runDBSensitiveTransaction $ do
     checkSnapshot now user session identity settings
     -- Password proof refreshes local authentication, not the separate provider reauthentication time.
-    A.saveUserSession session (session {S._sessionAuthenticatedAt = now})
+    void $ A.saveUserSession session (session {S._sessionAuthenticatedAt = now})
   pure NoContent
 
 -- | Existing passwords require password proof; passwordless accounts require fresh

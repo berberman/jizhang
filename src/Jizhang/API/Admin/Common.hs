@@ -66,7 +66,7 @@ type AdminGroupReceiptsAPI api =
 -- | Project and filter the full collection before sorting and selecting the page.
 paginatedListHandler :: Text -> MyHandler [src] -> (src -> dst) -> (Maybe Text -> [dst] -> [dst]) -> ([dst] -> Maybe Text -> [dst]) -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> MyHandler (PaginatedResponse dst)
 paginatedListHandler logMsg loadItems toItem applyFilter sortFn mQuery mOffset mLimit mSort = do
-  logInfo_ logMsg
+  logTrace_ logMsg
   loadedItems <- loadItems
   let mapped = map toItem loadedItems
   pure $ paginateResponse mOffset mLimit mQuery mSort sortFn $ applyFilter mQuery mapped

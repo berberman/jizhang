@@ -52,7 +52,7 @@ userServer authUser =
 
 getMe :: AuthUser -> MyHandler UserProfile
 getMe AuthUser {..} = do
-  logInfo_ $ "Fetching current user: " <> toText authUserId
+  logTrace_ $ "Fetching current user: " <> toText authUserId
   sUser <- lookupUserById authUserId
   pure $ schemaUserToProfile sUser
 
@@ -81,7 +81,7 @@ deleteMe AuthUser {..} = do
 
 getMyGroups :: AuthUser -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> MyHandler (PaginatedResponse Group)
 getMyGroups AuthUser {..} mQuery mOffset mLimit mSort = do
-  logInfo_ $ "Fetching groups for current user: " <> toText authUserId
+  logTrace_ $ "Fetching groups for current user: " <> toText authUserId
   groups <- getMyGroupsForUser authUserId
   pure $ paginateResponse mOffset mLimit mQuery mSort sortGroups $ filterGroups mQuery groups
 

@@ -39,18 +39,16 @@ getUserSession rowId = runSelectReturningOne $ select $ do
   pure row
 
 -- | Compare the complete expected snapshot before replacing; stale writes abort.
--- The snapshot is database-read and checked before writing in a Serializable
--- transaction. Check write cardinality only: TIMESTAMPTZ rounds runtime values.
-saveUserSession :: S.UserSession -> S.UserSession -> Pg ()
+-- Return PostgreSQL's stored row so later comparisons use its timestamp precision.
+saveUserSession :: S.UserSession -> S.UserSession -> Pg S.UserSession
 saveUserSession expected replacement = do
   unless (S._sessionId expected == S._sessionId replacement) abortAuthTransaction
   current <- getUserSession (S._sessionId expected)
   -- This read is a snapshot check, not a row lock; Serializable must reject concurrent replacements.
   unless (current == Just expected) abortAuthTransaction
   rows <- runUpdateReturningList $ save (S._userSessions S.jizhangDb) replacement
-  -- Compare cardinality, not returned timestamps: PostgreSQL may round the replacement's precision.
   case rows of
-    [_] -> pure ()
+    [stored] -> pure stored
     _ -> abortAuthTransaction
 
 insertAccountInvitation :: S.AccountInvitation -> Pg ()
@@ -403,11 +401,12 @@ failInvitationTransactions invitationId =
       )
 
 -- | Revoke one expected session and discard unfinished flow payloads bound to it.
--- Keep both writes inside the same caller-owned Serializable transaction.
-revokeSession :: S.UserSession -> UTCTime -> Pg ()
+-- Return the stored revocation snapshot; both writes require the caller's transaction.
+revokeSession :: S.UserSession -> UTCTime -> Pg S.UserSession
 revokeSession expected now = do
-  saveUserSession expected (expected {S._sessionRevokedAt = Just now})
+  revoked <- saveUserSession expected (expected {S._sessionRevokedAt = Just now})
   failSessionTransactions (S._sessionId expected)
+  pure revoked
 
 -- | Replacement issuance leaves password-reset invitations of other purposes intact.
 revokeInvitationsByPurpose :: UUID -> Text -> UTCTime -> Pg ()

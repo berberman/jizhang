@@ -16,7 +16,7 @@ import Data.Time (Day, UTCTime)
 import Data.UUID (UUID)
 import Data.UUID.V4 (nextRandom)
 import Database.Beam
-import Database.Beam.Backend.SQL.BeamExtensions (runUpdateReturningList)
+import Database.Beam.Backend.SQL.BeamExtensions (runInsertReturningList, runUpdateReturningList)
 import Database.Beam.Postgres
 import Jizhang.Database.Schema
 
@@ -26,8 +26,10 @@ insertExchangeQuote :: UUID -> Text -> Text -> Scientific -> Day -> UTCTime -> P
 insertExchangeQuote groupId source target rate effectiveDate fetchedAt = do
   quoteId <- liftIO nextRandom
   let quote = ExchangeQuote quoteId (GroupId groupId) source target rate "frankfurter" effectiveDate fetchedAt
-  runInsert $ insert (_exchangeQuotes jizhangDb) $ insertValues [quote]
-  pure quote
+  inserted <- runInsertReturningList $ insert (_exchangeQuotes jizhangDb) $ insertValues [quote]
+  case inserted of
+    [storedQuote] -> pure storedQuote
+    _ -> liftIO $ ioError $ userError "Expected one inserted exchange quote"
 
 -- | Resolve a quote only within its group; this does not check membership,
 -- freshness or compatibility with a record's currencies.

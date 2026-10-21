@@ -8,6 +8,7 @@ import Data.Time (getCurrentTime)
 import Data.UUID (UUID)
 import Data.UUID.V4 (nextRandom)
 import Database.Beam
+import Database.Beam.Backend.SQL.BeamExtensions (runInsertReturningList)
 import Database.Beam.Postgres
 import qualified Jizhang.Database.Record as R
 import Jizhang.Database.Schema
@@ -19,8 +20,10 @@ insertReceipt groupId uploadedBy note = do
   newUUID <- liftIO nextRandom
   now <- liftIO getCurrentTime
   let receipt = Receipt newUUID (GroupId groupId) (UserId uploadedBy) note now
-  runInsert $ insert (_receipts jizhangDb) $ insertValues [receipt]
-  pure receipt
+  inserted <- runInsertReturningList $ insert (_receipts jizhangDb) $ insertValues [receipt]
+  case inserted of
+    [storedReceipt] -> pure storedReceipt
+    _ -> liftIO $ ioError $ userError "Expected one inserted receipt"
 
 getReceipt :: UUID -> UUID -> Pg (Maybe Receipt)
 getReceipt groupId receiptId = runSelectReturningOne $ select $ do

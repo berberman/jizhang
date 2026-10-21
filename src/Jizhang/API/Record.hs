@@ -82,7 +82,7 @@ addTransferRecord authUser (GroupId gId) req@TransferRecordRequest {..} = do
 -- | Authorize the group before projecting persisted amounts and historical users.
 getRecord :: AuthUser -> GroupId -> RecordId -> MyHandler Record
 getRecord authUser (GroupId gId) (RecordId rId) = do
-  logInfo_ $ "Fetching record with ID " <> toText rId <> " in group " <> toText gId
+  logTrace_ $ "Fetching record with ID " <> toText rId <> " in group " <> toText gId
   ensureGroupExists gId
   ensureGroupMember (authUserId authUser) gId
   (record, ssplits) <- fetchOrFail "Record" rId $ runDB (D.getRecordWithSplits gId rId)
@@ -93,7 +93,7 @@ getRecord authUser (GroupId gId) (RecordId rId) = do
 -- | Membership is checked here; the shared service filters and sorts before slicing.
 getRecordsInGroup :: AuthUser -> GroupId -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> MyHandler (PaginatedResponse Record)
 getRecordsInGroup authUser group@(GroupId gId) mQuery mOffset mLimit mSort = do
-  logInfo_ $ "Fetching all records in group " <> toText gId
+  logTrace_ $ "Fetching all records in group " <> toText gId
   ensureGroupMember (authUserId authUser) gId
   getRecordPage group mQuery mOffset mLimit mSort
 

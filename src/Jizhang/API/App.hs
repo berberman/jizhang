@@ -38,9 +38,9 @@ import Jizhang.Database.Connection (ConnectionManager, DatabaseUnavailable (..),
 import Jizhang.ExchangeRate (ExchangeRateError, ReferenceRate)
 import Jizhang.OIDC (AuthRuntime)
 import Jizhang.RequestProtection (RequestProtection)
-import Log.Class (MonadLog, logAttention_)
+import Log.Class (MonadLog (getLoggerEnv), logAttention_)
 import Log.Data (LogLevel (..))
-import Log.Monad (LogT, getLoggerIO)
+import Log.Monad (LogT, LoggerEnv (leMaxLogLevel), getLoggerIO)
 import Servant
 import Servant.Auth.Server (JWTSettings)
 
@@ -110,10 +110,15 @@ runDBSensitiveWith scope action = do
 runDBWith :: (Connection -> IO a -> IO a) -> Pg a -> MyHandler a
 runDBWith scope action = do
   connections <- asks appConn
-  logger <- getLoggerIO
-  t <- liftIO getCurrentTime
+  env <- getLoggerEnv
+  runBeam <- if leMaxLogLevel env < LogTrace
+    then pure runBeamPostgres
+    else do
+      logger <- getLoggerIO
+      pure $ \conn query -> runBeamPostgresDebug
+        (\sql -> getCurrentTime >>= \now -> logger now LogTrace (T.pack sql) emptyObject) conn query
   result <- databaseAction $ try $ withConnection connections $ \conn ->
-    scope conn $ runBeamPostgresDebug (\x -> logger t LogTrace (T.pack x) emptyObject) conn action
+    scope conn $ runBeam conn action
   case result of
     Right value -> pure value
     Left sqlError -> maybe (liftIO $ throwIO sqlError) throwError (constraintError sqlError)
