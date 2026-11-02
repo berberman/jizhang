@@ -13,7 +13,8 @@ module Jizhang.API.Record.Input
     resolveSplitRecordRate,
     resolveTransferRequest,
     inputCurrency,
-    withGroupCurrencyLock
+    withGroupCurrencyLock,
+    withGroupCurrencyLockPrivate
   )
 where
 
@@ -27,7 +28,7 @@ import qualified Data.Text as T
 import Data.Time (Day)
 import Data.UUID (UUID)
 import Database.Beam.Postgres (Pg)
-import Jizhang.API.App (AppEnv (appCurrencies), MyHandler, runDB, runDBTransaction)
+import Jizhang.API.App (AppEnv (appCurrencies), MyHandler, runDB, runDBTransaction, runDBPrivateTransaction)
 import Jizhang.API.Group.Projection (storedGroupSettings)
 import Jizhang.API.Internal.Error (fetchOrFail, fromInput, fromStoredData)
 import Jizhang.API.Internal.Resource (ensureActiveGroupUser)
@@ -46,10 +47,16 @@ inputCurrency catalog = fromInput . lookupCurrency catalog
 -- | The conditional row update serializes policy changes and financial writes.
 -- Call only for nonempty financial mutations, after all request validation.
 withGroupCurrencyLock :: S.Group -> Pg a -> MyHandler a
-withGroupCurrencyLock group action = do
+withGroupCurrencyLock = withGroupCurrencyLockUsing runDBTransaction
+
+withGroupCurrencyLockPrivate :: S.Group -> Pg a -> MyHandler a
+withGroupCurrencyLockPrivate = withGroupCurrencyLockUsing runDBPrivateTransaction
+
+withGroupCurrencyLockUsing :: (Pg (Maybe a) -> MyHandler (Maybe a)) -> S.Group -> Pg a -> MyHandler a
+withGroupCurrencyLockUsing runner group action = do
   catalog <- asks appCurrencies
   (mode, CurrencyInfo base _ _) <- fromStoredData $ storedGroupSettings catalog group
-  result <- runDBTransaction $ do
+  result <- runner $ do
     -- Recheck the policy snapshot under the write lock; validation alone cannot exclude a concurrent change.
     locked <- D.lockGroupCurrency (S._groupId group) mode base
     if locked then Just <$> action else pure Nothing

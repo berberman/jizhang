@@ -57,7 +57,7 @@ extractRecordId TransferRecord {..} = recordId
 extractRecordId IncomeRecord {..} = recordId
 
 receiptNote :: Receipt -> Text
-receiptNote (Receipt _ _ _ n _ _) = n
+receiptNote (Receipt _ _ _ _ n _ _ _) = n
 
 receiptRecords :: Receipt -> [Record]
-receiptRecords (Receipt _ _ _ _ rs _) = rs
+receiptRecords (Receipt _ _ _ _ _ rs _ _) = rs

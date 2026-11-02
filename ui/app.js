@@ -2,12 +2,12 @@
 
 const $ = (selector) => document.querySelector(selector);
 const newLists = () => Object.fromEntries(['users', 'admins', 'groups', 'records', 'receipts'].map((kind) => [kind, {
-  query: '', offset: 0, limit: 20, sort: ({ groups: 'groupName', records: '-date', receipts: 'note' })[kind] || 'username',
+  query: '', offset: 0, limit: 20, sort: ({ groups: 'groupName', records: '-date', receipts: 'title' })[kind] || 'username',
 }]));
 const state = {
   adminUsername: '', route: { path: '#/overview', page: 'overview', groupId: null },
   lists: newLists(), group: null, editor: null, confirmation: null,
-  recordView: null, reportView: null,
+  recordView: null, reportView: null, receiptAI: null, sourceViewer: null, receiptViewer: null,
   generation: 0, sessionGeneration: 0, navigationGeneration: 0, loginPending: false,
 };
 
@@ -105,6 +105,7 @@ function clientPage(items, params, choiceFn = userChoice) {
 function clearSession(message = '') {
   state.sessionGeneration++; state.generation++; state.navigationGeneration++;
   closeInvitation(false);
+  closeAssociatedReceipt(false); closeReceiptSource(false); state.receiptAI = null;
   state.adminUsername = ''; state.group = null; state.lists = newLists();
   state.recordView = null; state.reportView = null;
   if (state.confirmation) finishConfirmation(false);
@@ -127,7 +128,7 @@ function renderShell() {
 function announce(message) { $('#success-status').textContent = message; }
 function parseRoute(hash) {
   const [pathname, search = ''] = hash.split('?');
-  if (/^#\/(overview|users|admins|groups|authentication)$/.test(pathname)) return { path: pathname, page: pathname.slice(2), groupId: null };
+  if (/^#\/(overview|users|admins|groups|authentication|receipt-ai)$/.test(pathname)) return { path: pathname, page: pathname.slice(2), groupId: null };
   const userMatch = /^#\/users\/([^/]+)$/.exec(pathname);
   if (userMatch) {
     try { return { path: pathname, page: 'users', userId: decodeURIComponent(userMatch[1]), groupId: null }; }
@@ -152,6 +153,8 @@ function groupPath(groupId, section = 'records', query = null) {
 function groupApi(groupId) { return `/admin/groups/${encodeURIComponent(groupId)}`; }
 async function routeChanged() {
   closeInvitation(false);
+  closeAssociatedReceipt(false);
+  closeReceiptSource(false);
   const route = parseRoute(location.hash);
   const navigation = ++state.navigationGeneration;
   if (state.editor) {
@@ -185,9 +188,15 @@ async function loadPage() {
   const fetchPage = (url) => jsonFetch(url, {}, current);
   const root = $('#page');
   const protectedRecords = route.page === 'records' && state.recordView?.groupId === route.groupId && state.recordView.surface?.isConnected;
-  if (!protectedRecords) { disposePickersWithin(root); root.replaceChildren(node('p', 'Loading…', 'muted')); }
+  const protectedAI = route.page === 'receipt-ai' && state.receiptAI?.surface?.isConnected;
+  if (!protectedRecords && !protectedAI) { disposePickersWithin(root); root.replaceChildren(node('p', 'Loading…', 'muted')); }
   root.setAttribute('aria-busy', 'true');
   try {
+    if (route.page === 'receipt-ai') {
+      const settings = await fetchPage('/admin/receipt-ai/settings');
+      if (current()) renderReceiptAI(root, settings);
+      return;
+    }
     if (route.page === 'authentication') {
       const settings = await fetchPage('/admin/authentication');
       if (current()) renderAuthentication(root, settings);
@@ -250,7 +259,7 @@ function renderToolbar(kind, createActions = []) {
   const params = state.lists[kind]; const form = node('form', null, 'toolbar');
   const search = node('input'); search.type = 'search'; search.value = params.query;
   const sort = node('select');
-  const label = ({ records: 'Title', receipts: 'Note', groups: 'Group name' })[kind] || 'Username';
+  const label = ({ records: 'Title', receipts: 'Title', groups: 'Group name' })[kind] || 'Username';
   const field = params.sort.replace(/^-/, '');
   for (const [value, text] of [[field, `${label} A–Z`], [`-${field}`, `${label} Z–A`]]) {
     const option = node('option', text); option.value = value; sort.append(option);
@@ -448,13 +457,15 @@ function renderGroup(root, group, section, data) {
   const kind = section;
   const actions = [button('Add receipt', () => openEditor('receipt'), 'primary', 'add-receipt')];
   root.append(renderToolbar(kind, actions));
-  const page = clientPage(data, state.lists[kind], (item) => item.note);
+  const page = clientPage(data, state.lists[kind], item => ({ primary: item.title, secondary: item.note, entity: item }));
+  page.items = page.items.map(choice => choice.entity);
+  state.lists[kind].offset = page.pageInfo.offset;
   const list = node('div', null, 'entity-list');
   for (const item of page.items) {
     {
       const details = node('details'); details.append(node('summary', `${item.records.length} expenses`));
       for (const expense of item.records) details.append(node('p', `${expense.title}: ${recordMoney(expense)} · ${userLabel(expense.paidBy)} · ${expense.date}`), recordDetails(expense));
-      list.append(entity([['Receipt note', node('span', item.note || '(No note)', 'receipt-note')], ['Totals', receiptTotals(item.records)], ['Uploader', userLabel(item.uploadedBy)], ['Created', item.createdAt], ['Expenses', details]], [button('Edit', () => openEditor('receipt', item), 'secondary', `edit-receipt-${item.receiptId}`), button('Delete', () => deleteReceipt(group, item), 'danger', `delete-receipt-${item.receiptId}`)]));
+      list.append(entity([['Receipt title', item.title], ['Receipt note', node('span', item.note || '(No note)', 'receipt-note')], ['Totals', receiptTotals(item.records)], ['Uploader', userLabel(item.uploadedBy)], ['Created', item.createdAt], ['Expenses', details]], [...(item.source ? [button('View photo', () => openReceiptSource(group.groupId, item.receiptId))] : []), button('Edit', () => openEditor('receipt', item), 'secondary', `edit-receipt-${item.receiptId}`), button('Delete', () => deleteReceipt(group, item), 'danger', `delete-receipt-${item.receiptId}`)]));
     }
   }
   if (!page.items.length) list.append(node('p', 'No matching items. Use the actions above to add one.', 'empty-state'));
@@ -519,7 +530,8 @@ function renderRecordResults(view) {
   view.status.textContent = view.draft === view.applied.query ? 'Results' : 'Previous results (search not applied)';
   for (const item of page.items) {
     const kind = recordKind(item);
-    list.append(entity([['Title / type', `${item.title} · ${kind === 'transfer' ? 'Payment / Transfer' : capitalize(kind)}`], ['Amount', recordMoney(item)], ['Date', item.date], ['Created (UTC)', item.createdAt], [kind === 'income' ? 'Received by' : 'Payer', recordUserLabel(kind === 'income' ? item.receivedBy : item.paidBy)], ...(item.note?.trim() ? [['Record note', node('p', item.note, 'record-note record-note-preview')]] : []), ['Details', recordDetails(item)]], [button('Edit', () => openEditor(kind, item), 'secondary', `edit-record-${item.recordId}`), button('Delete', () => deleteRecord(group, item), 'danger', `delete-record-${item.recordId}`)]));
+    const title = append(node('div', null, 'stack gap-sm'), node('span', `${item.title} · ${kind === 'transfer' ? 'Payment / Transfer' : capitalize(kind)}`), receiptAssociation(group.groupId, item.receipt));
+    list.append(entity([['Title / type', title], ['Amount', recordMoney(item)], ['Date', item.date], ['Created (UTC)', item.createdAt], [kind === 'income' ? 'Received by' : 'Payer', recordUserLabel(kind === 'income' ? item.receivedBy : item.paidBy)], ...(item.note?.trim() ? [['Record note', node('p', item.note, 'record-note record-note-preview')]] : []), ['Details', recordDetails(item)]], [button('Edit', () => openEditor(kind, item), 'secondary', `edit-record-${item.recordId}`), button('Delete', () => deleteRecord(group, item), 'danger', `delete-record-${item.recordId}`)]));
   }
   if (!page.items.length) list.append(node('p', 'No matching records.', 'empty-state'), button('Clear filters', view.clear));
   view.results.replaceChildren(list, renderPager(page, 'records'));
@@ -800,10 +812,11 @@ function renderReport(root, group, report) {
         const type = ({ expense: 'Expense', income: 'Income', transfer: 'Payment / Transfer' })[row.recordType];
         const values = [row.date, type, row.title, money(row.recordAmountMinor, section.currency), impact];
         const tr = node('tr'); const mobile = node('article', null, 'balance-record stack');
+        const titleCell = () => append(node('div', null, 'stack gap-sm'), node('span', row.title), receiptAssociation(group.groupId, row.receipt));
         values.forEach((value, index) => {
-          const td = node('td'); td.append(value instanceof Node ? value : document.createTextNode(value));
+          const td = node('td'); td.append(index === 2 ? titleCell() : value instanceof Node ? value : document.createTextNode(value));
           if (index >= 3) td.className = 'balance-amount'; tr.append(td);
-          mobile.append(field(['Date', 'Type', 'Title', 'Record amount', 'Balance impact'][index], value instanceof Node ? value.cloneNode(true) : value));
+          mobile.append(field(['Date', 'Type', 'Title', 'Record amount', 'Balance impact'][index], index === 2 ? titleCell() : value instanceof Node ? value.cloneNode(true) : value));
         });
         const action = layout => button(`Open record: ${row.title}`, () => openRecord(row.recordId), 'secondary', `balance-record-${layout}-${key}-${row.recordId}`);
         tr.append(append(node('td'), action('table'))); mobile.append(action('stack')); body.append(tr); stacked.append(mobile);
@@ -839,6 +852,13 @@ function restoreFocus(reference) {
 }
 function closeEditor(restore = true) {
   const editor = state.editor; state.editor = null;
+  closeReceiptBatch(editor, false);
+  closeAssociatedReceipt(false);
+  closeReceiptSource(false);
+  editor?.media?.dispose();
+  if (editor?.kind === 'receipt') { editor.submitReceiptReview = null; editor.draft.source = undefined; editor.importEvidence = null; editor.reviewDraft = null; editor.appliedImport = null; editor.image = null; editor.releasePreview = null; }
+  if (editor?.kind === 'receipt-ai-settings') editor.draft.apiKey = '';
+  $('#editor-dialog').classList.remove('receipt-editor');
   if (editor) for (const draft of editor.kind === 'receipt' ? editor.draft.records : [editor.draft]) retireDraft(draft);
   if ($('#editor-dialog').open) $('#editor-dialog').close();
   disposePickersWithin($('#editor-body')); $('#editor-body').replaceChildren(); $('#editor-error').textContent = '';
@@ -879,7 +899,7 @@ async function acceptConfirmation() {
 async function requestDiscard(reloadStatistics = true) {
   if (!state.editor) return true;
   if (state.editor.pending) return false;
-  if (state.editor.dirty && !await confirmAction('Discard unsaved changes?', 'Your unsaved changes will be lost.', null, 'Discard changes')) return false;
+  if ((state.editor.dirty || state.editor.extracting) && !await confirmAction('Discard unsaved changes?', state.editor.extracting ? 'The extraction may still finish and be billed. Leaving discards this local image and draft.' : 'Your unsaved changes will be lost.', null, 'Discard changes')) return false;
   const reference = closeEditor();
   if (reloadStatistics && state.route.page === 'statistics' && state.adminUsername) { await loadPage(); restoreFocus(reference); }
   return true;
@@ -900,7 +920,7 @@ function deleteRecord(group, record) {
   return destructive(`Delete ${kind} ${record.title || capitalize(kind)}?`, 'This permanently removes this record and its splits and changes the group balances.', () => jsonFetch(`${groupApi(group.groupId)}/records/${encodeURIComponent(record.recordId)}`, { method: 'DELETE' }), `${capitalize(kind)} deleted.`);
 }
 function deleteReceipt(group, receipt) {
-  return destructive('Delete this receipt and its expenses?', `Receipt: ${receipt.note || '(No note)'}. This permanently deletes ${receipt.records.length} expenses and changes the group balances.`, () => jsonFetch(`${groupApi(group.groupId)}/receipts/${encodeURIComponent(receipt.receiptId)}`, { method: 'DELETE' }), 'Receipt and its expenses deleted.');
+  return destructive('Delete this receipt and its expenses?', `Receipt: ${receipt.title}. This permanently deletes ${receipt.records.length} expenses and changes the group balances.`, () => jsonFetch(`${groupApi(group.groupId)}/receipts/${encodeURIComponent(receipt.receiptId)}`, { method: 'DELETE' }), 'Receipt and its expenses deleted.');
 }
 function deleteGroup(group) {
   return destructive(`Delete group ${group.groupName}?`, 'This permanently deletes the group, its records, receipts, and memberships.', () => jsonFetch(groupApi(group.groupId), { method: 'DELETE' }), 'Group deleted.', '#/groups');
@@ -920,7 +940,7 @@ async function getCurrencies(current) {
 }
 function needsConversion(draft) { return state.group.currencyMode === 'single' && draft.currency.code !== state.group.defaultCurrency.code; }
 function invalidateRate(draft) { draft.rateGeneration = (draft.rateGeneration || 0) + 1; draft.rateLoading = false; }
-function retireDraft(draft) { draft.active = false; invalidateRate(draft); draft.rateRender = null; draft.summaryRender = null; }
+function retireDraft(draft) { draft.active = false; invalidateRate(draft); draft.rateRender = null; draft.summaryRender = null; draft.refreshFields = null; }
 function rateInput(draft) {
   if (!needsConversion(draft)) return null;
   if (draft.rateLoading) throw new Error('Wait for the rate, or enter a manual rate.');
@@ -972,7 +992,154 @@ function enterMode(draft, mode) {
     if (mode === 'percentage' || mode === 'exact') splitEqually(draft);
   }
 }
+function receiptBatchExactAmount(records) {
+  const error = 'Exact amounts require selected expenses with the same currency and total; use shares or percentages.';
+  try {
+    const amount = draftAmount(records[0]);
+    if (records.some(record => record.currency.code !== records[0].currency.code || record.currency.minorUnits !== records[0].currency.minorUnits || draftAmount(record) !== amount)) throw new Error(error);
+    return amount;
+  } catch (_) { throw new Error(error); }
+}
+function preflightReceiptBatchChanges(records, group, changes) {
+  if (!Array.isArray(records) || !records.length || new Set(records).size !== records.length) throw new Error('Select at least one expense.');
+  const active = new Set(group.members.map(member => member.userId));
+  const result = {};
+  if (changes.payerUserId !== undefined) {
+    if (!active.has(changes.payerUserId)) throw new Error('Choose an active member as payer.');
+    result.payerUserId = changes.payerUserId;
+  }
+  if (changes.accountingDate !== undefined) {
+    const date = changes.accountingDate;
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || date.startsWith('0000') || !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) throw new Error('Choose a valid date in YYYY-MM-DD format.');
+    result.accountingDate = date;
+  }
+  if (changes.mode !== undefined || changes.splits !== undefined) {
+    if (!['equal', 'shares', 'percentage', 'exact'].includes(changes.mode) || !Array.isArray(changes.splits)) throw new Error('Choose a split method and participants.');
+    const rows = changes.splits.map(row => ({ userId: row.userId, value: M.parseMinorAmount(row.value) }));
+    if (rows.some(row => !active.has(row.userId))) throw new Error('Choose active members for all split participants.');
+    const amount = changes.mode === 'exact' ? receiptBatchExactAmount(records) : 1n;
+    const error = M.validateMoneySplits(changes.mode, amount, rows); if (error) throw new Error(error);
+    result.mode = changes.mode;
+    result.splits = rows.map(row => ({ userId: row.userId, value: row.value.toString() }));
+    result.editorValues = rows.map(row => ({ userId: row.userId, value: changes.mode === 'percentage' ? major(row.value, { minorUnits: 2 }) : changes.mode === 'exact' ? major(row.value, records[0].currency) : row.value.toString() }));
+  }
+  if (!Object.keys(result).length) throw new Error('Choose at least one field to change.');
+  return result;
+}
+function applyReceiptBatchChanges(records, group, changes) {
+  const checked = preflightReceiptBatchChanges(records, group, changes);
+  for (const record of records) {
+    if (checked.payerUserId !== undefined) record.byUserId = checked.payerUserId;
+    if (checked.accountingDate !== undefined) record.date = checked.accountingDate;
+    if (checked.mode !== undefined) {
+      record.mode = checked.mode; record.selected = new Set(checked.splits.map(row => row.userId)); record.visited.add(checked.mode);
+      if (checked.mode !== 'equal') for (const row of checked.editorValues) record.values[checked.mode].set(row.userId, row.value);
+    }
+  }
+  for (const record of records) record.refreshFields?.(checked);
+  return checked;
+}
+function receiptBatchBlocked(editor) { return !editor || editor.pending || Boolean(editor.extracting || editor.loadingSource); }
+function closeReceiptBatch(editor = state.editor, restore = true) {
+  const batch = editor?.receiptBatch; if (!batch) return;
+  editor.receiptBatch = null; disposePickersWithin(batch.dialog);
+  if (batch.dialog.open) batch.dialog.close(); batch.dialog.remove();
+  if (restore) restoreFocus(batch.focus);
+}
+function openReceiptBatch(editor) {
+  if (state.editor !== editor || receiptBatchBlocked(editor) || editor.receiptBatch) return;
+  const records = editor.draft.records.filter(record => editor.receiptSelection.has(record)); if (!records.length) return;
+  const epoch = state.sessionGeneration;
+  const dialog = node('dialog'); dialog.setAttribute('aria-labelledby', 'receipt-batch-title');
+  const form = node('form'); form.noValidate = true;
+  const header = node('header', null, 'dialog-header'); const title = node('h2', 'Edit selected expenses'); title.id = 'receipt-batch-title'; header.append(title);
+  const body = node('div', null, 'dialog-body'); body.append(node('p', `${records.length} expenses selected. Only enabled fields will change.`, 'muted'));
+  const footer = node('footer', null, 'dialog-actions'); const error = node('p', '', 'error'); error.setAttribute('role', 'alert'); error.tabIndex = -1; footer.append(error);
+  const cancel = button('Cancel', () => closeReceiptBatch(editor));
+  header.append(button('Close', () => closeReceiptBatch(editor), 'ghost'));
+  const apply = node('button', 'Apply changes', 'primary'); apply.type = 'submit'; footer.append(cancel, apply);
+  append(form, header, body, footer); dialog.append(form);
+  function changeChoice(label, choices = [['change', 'Change']]) {
+    const select = node('select');
+    for (const [value, text] of [['', 'Leave unchanged'], ...choices]) { const option = node('option', text); option.value = value; select.append(option); }
+    body.append(labeled(label, select)); return select;
+  }
+  const payerEnabled = changeChoice('Paid by'); const payerFields = node('div'); payerFields.hidden = true; body.append(payerFields);
+  const payer = { userId: '' };
+  const payerPicker = entityPicker({ label: 'New payer', getSelected: () => { const member = state.group.members.find(member => member.userId === payer.userId); return member ? userChoice(member) : null; },
+    loadPage: args => Promise.resolve(clientPage(state.group.members, args)), onSelect: choice => { payer.userId = choice.id; } }); payerFields.append(payerPicker.element);
+  payerEnabled.onchange = () => { payerFields.hidden = !payerEnabled.value; };
+  const dateEnabled = changeChoice('Date'); const date = node('input'); date.type = 'date'; const dateField = labeled('New accounting date', date); dateField.hidden = true; body.append(dateField);
+  dateEnabled.onchange = () => { dateField.hidden = !dateEnabled.value; };
+  const mode = changeChoice('Splits', [['equal', 'Equal'], ['shares', 'Shares'], ['percentage', 'Percentage'], ['exact', 'Exact amounts']]);
+  const splitFields = node('div', null, 'stack'); splitFields.hidden = true; body.append(splitFields);
+  const selected = new Set(state.group.members.map(member => member.userId)); const values = { shares: new Map(), percentage: new Map(), exact: new Map() };
+  const exactHelp = 'Exact amounts require selected expenses with the same currency and total; use shares or percentages.';
+  function renderSplits() {
+    splitFields.hidden = !mode.value; splitFields.replaceChildren(); if (!mode.value) return;
+    if (mode.value === 'exact') splitFields.append(node('p', `${exactHelp} Enter absolute amounts in the original currency.`, 'muted'));
+    for (const member of state.group.members) {
+      const row = node('div', null, 'grid-2'); const check = node('input'); check.type = 'checkbox'; check.checked = selected.has(member.userId);
+      check.onchange = () => { if (check.checked) selected.add(member.userId); else selected.delete(member.userId); const value = row.querySelector('input[type="text"]'); if (value) value.disabled = !check.checked; };
+      row.append(labeled(userLabel(member), check));
+      if (mode.value !== 'equal') {
+        const policy = mode.value; const value = node('input'); value.type = 'text'; value.inputMode = policy === 'shares' ? 'numeric' : 'decimal'; value.disabled = !check.checked;
+        value.value = values[policy].get(member.userId) ?? (policy === 'shares' ? '1' : '');
+        value.oninput = () => values[policy].set(member.userId, value.value);
+        row.append(labeled(policy === 'shares' ? 'Shares (0–32767)' : policy === 'percentage' ? 'Percentage (%)' : `Exact amount (${records[0].currency.code})`, value));
+      }
+      splitFields.append(row);
+    }
+  }
+  mode.onchange = renderSplits;
+  form.onsubmit = event => {
+    event.preventDefault(); error.textContent = '';
+    if (state.editor !== editor || epoch !== state.sessionGeneration || receiptBatchBlocked(editor)) return;
+    try {
+      if (records.some(record => !editor.draft.records.includes(record))) throw new Error('Selected expenses changed. Close this dialog and select them again.');
+      const changes = {};
+      if (payerEnabled.value) changes.payerUserId = payer.userId;
+      if (dateEnabled.value) changes.accountingDate = date.value;
+      if (mode.value) {
+        changes.mode = mode.value;
+        if (mode.value === 'exact') receiptBatchExactAmount(records);
+        changes.splits = [...selected].map(userId => {
+          const raw = values[mode.value]?.get(userId) ?? (mode.value === 'shares' ? '1' : '');
+          const value = mode.value === 'equal' ? 1n : mode.value === 'percentage' ? M.parsePercentage(raw) : mode.value === 'exact' ? M.parseMajorAmount(raw, { minorDigits: records[0].currency.minorUnits, allowZero: true }) : /^\d+$/.test(raw.trim()) ? BigInt(raw.trim()) : (() => { throw new Error('Shares must be a whole number from 0 to 32767'); })();
+          return { userId, value: value.toString() };
+        });
+      }
+      applyReceiptBatchChanges(records, state.group, changes); editor.dirty = true;
+      editor.receiptBatchApplied?.(records, changes); closeReceiptBatch(editor); announce(`Updated ${records.length} selected expenses. Save the receipt to commit these changes.`);
+    } catch (failure) { error.textContent = errorMessage(failure); error.focus(); }
+  };
+  dialog.addEventListener('cancel', event => { event.preventDefault(); event.stopPropagation(); closeReceiptBatch(editor); });
+  dialog.addEventListener('keydown', event => { if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); closeReceiptBatch(editor); } });
+  editor.receiptBatch = { dialog, focus: focusReference() }; document.body.append(dialog); dialog.showModal(); payerEnabled.focus();
+}
 function markDirty() { if (state.editor) state.editor.dirty = true; }
+function normalizeReceiptTitle(value) {
+  if (typeof value !== 'string') throw new Error('Receipt title is required.');
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value)) throw new Error('Receipt title cannot contain control characters.');
+  const title = value.replace(/^[ \u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+|[ \u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+$/gu, '');
+  if (!title) throw new Error('Receipt title is required.');
+  if (Array.from(title).length > 512) throw new Error('Receipt title must be at most 512 characters.');
+  return title;
+}
+function validateReceiptTitle(editor) {
+  try {
+    const title = normalizeReceiptTitle(editor.draft.title);
+    editor.draft.title = title;
+    const input = $('#editor-body').querySelector('[data-receipt-title]');
+    if (input) input.value = title;
+    return true;
+  } catch (error) {
+    editor.error = errorMessage(error); $('#editor-error').textContent = editor.error;
+    const input = $('#editor-body').querySelector('[data-receipt-title]');
+    if (input) { input.focus(); input.scrollIntoView({ block: 'nearest' }); }
+    return false;
+  }
+}
 function inputField(parent, title, draft, key, options = {}) {
   const input = node(options.multiline ? 'textarea' : 'input');
   if (!options.multiline) input.type = options.type || 'text';
@@ -1138,12 +1305,13 @@ function currencyPicker(parent, label, draft, changed, locked = false) {
 }
 function renderCurrencyFields(parent, draft, changed = () => {}, { transfer = false, batch = false } = {}) {
   const review = node('p', '', 'muted'); const rates = node('div', null, 'stack');
-  const currencyControl = currencyPicker(parent, batch ? 'Currency for every imported row' : 'Currency', draft, () => {
+  const currencyControl = draft.importLocked ? { refresh() {} } : currencyPicker(parent, batch ? 'Currency for every imported row' : 'Currency', draft, () => {
     invalidateRate(draft); draft.reference = null; draft.manualRate = ''; draft.rateError = '';
     review.textContent = `Review amounts in ${draft.currency.code}. Entered amounts are not converted.`;
     changed(); render(); if (!transfer && needsConversion(draft)) refreshRate(draft, false);
   }, transfer && state.group.currencyMode === 'single');
   parent.append(review, rates);
+  if (draft.importLocked) parent.append(node('p', `Currency: ${draft.currency.code}`));
   if (batch) parent.append(node('p', 'Import each currency separately.', 'muted'));
   draft.rateRender = () => { if (rates.isConnected && draft.active && !state.editor?.pending) { render(); changed(); } };
   function render() {
@@ -1168,8 +1336,9 @@ function renderSplitRecordFields(parent, draft, kind = 'expense') {
   const grid = node('div', null, 'grid-2'); const preview = node('div', null, 'stack'); const splits = node('div', null, 'stack');
   inputField(grid, 'Title', draft, 'title', { required: true, changed: () => draft.summaryRender?.() });
   const amount = inputField(grid, 'Amount', draft, 'amount', { required: true, changed: updatePreview }); amount.inputMode = 'decimal';
-  memberPicker(grid, kind === 'income' ? 'Received by' : 'Paid by', draft, 'byUserId', () => state.group.members, updatePreview);
-  inputField(grid, 'Date', draft, 'date', { type: 'date', required: true }); parent.append(grid);
+  if (draft.importLocked) { amount.readOnly = true; grid.append(button('Edit amounts', () => state.editor?.returnToReceiptReview?.())); }
+  const payerPicker = memberPicker(grid, kind === 'income' ? 'Received by' : 'Paid by', draft, 'byUserId', () => state.group.members, updatePreview);
+  const date = inputField(grid, 'Date', draft, 'date', { type: 'date', required: true }); parent.append(grid);
   inputField(parent, 'Note (optional)', draft, 'note', { multiline: true }).dataset.recordNote = '';
   let displayedCurrency = draft.currency.code;
   renderCurrencyFields(parent, draft, () => { if (displayedCurrency !== draft.currency.code) { displayedCurrency = draft.currency.code; renderSplits(); } updatePreview(); });
@@ -1202,6 +1371,7 @@ function renderSplitRecordFields(parent, draft, kind = 'expense') {
     }
   }
   function updatePreview() {
+    receiptRolesChanged(draft);
     preview.replaceChildren(node('h4', kind === 'income' ? 'Entitlement preview' : 'Split preview'));
     try {
       const amount = draftAmount(draft), rows = splitRows(draft);
@@ -1218,6 +1388,12 @@ function renderSplitRecordFields(parent, draft, kind = 'expense') {
     if (!state.group.members.some(user => user.userId === draft.byUserId) || [...draft.selected].some(id => !state.group.members.some(user => user.userId === id))) preview.append(node('p', 'Re-add former members before saving. Their draft values are retained.', 'error'));
     draft.summaryRender?.();
   }
+  draft.refreshFields = changes => {
+    if (changes.payerUserId !== undefined) payerPicker.refresh();
+    if (changes.accountingDate !== undefined) date.value = draft.date;
+    if (changes.mode !== undefined) { mode.value = draft.mode; renderSplits(); }
+    updatePreview();
+  };
   renderSplits(); updatePreview();
 }
 function validateCommon(draft) {
@@ -1258,6 +1434,7 @@ async function refreshEditorPolicy(editor) {
     const previous = state.group; const group = await jsonFetch(groupApi(editor.groupId), {}, () => state.editor === editor);
     if (state.editor !== editor) return; state.group = group;
     editor.roleRender?.();
+    editor.resetReceiptRoles?.();
     const pairChanged = previous.currencyMode !== group.currencyMode || previous.defaultCurrency.code !== group.defaultCurrency.code;
     for (const draft of editor.kind === 'receipt' ? editor.draft.records : [editor.draft]) {
       if (pairChanged && draft.currency) { invalidateRate(draft); draft.reference = null; draft.manualRate = ''; draft.rateError = 'Group policy changed. Review this currency and choose a new rate if conversion is required.'; draft.rateRender?.(); }
@@ -1280,6 +1457,526 @@ function transferRoleError(draft) {
   if ([draft.byUserId, draft.toUserId].some(id => !members.some(member => member.userId === id))) return 'Re-add this member before saving changes.';
   return '';
 }
+function nanoUsd(value) {
+  if (value === null || value === undefined) return 'Unknown';
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) throw new Error('Invalid estimated API cost');
+  const amount = BigInt(value); let fraction = (amount % 1000000000n).toString().padStart(9, '0').replace(/0+$/, '');
+  fraction = fraction.padEnd(2, '0'); return `USD ${amount / 1000000000n}.${fraction}`;
+}
+const aiReason = reason => ({ disabled: 'Receipt reading is disabled.', key_missing: 'No API key configured.', stored_key_unreadable: 'The saved key cannot be read. Check the server encryption key or replace the saved API key.', upload_limit: 'The server request limit leaves no photo upload capacity.' })[reason] || 'Configured';
+function renderReceiptAISettingsEditor(body, draft, settings) {
+  $('#editor-title').textContent = 'Receipt AI settings'; $('#editor-save').textContent = 'Save settings';
+  checkboxField(body, 'Enable receipt reading', draft, 'enabled');
+  if (settings.keySource === 'environment') body.append(node('p', 'Managed by the server environment.', 'muted'));
+  else if (!settings.canStoreKey) body.append(node('p', 'Set RECEIPT_AI_SECRET_KEY on the server to save an API key here.', 'muted'));
+  else {
+    const staged = node('p', '', 'muted'); const refresh = () => { staged.textContent = draft.keyAction === 'clear' ? 'Saved key will be removed when you save.' : ''; };
+    const input = inputField(body, 'OpenAI API key', draft, 'apiKey', { type: 'password', autocomplete: 'new-password', maxLength: 512, changed: () => { draft.keyAction = draft.apiKey.trim() ? 'replace' : 'keep'; refresh(); } });
+    body.append(node('p', 'Leave blank to keep the saved key.', 'muted'));
+    if (settings.keyConfigured) body.append(button('Clear saved key', async () => {
+      const editor = state.editor;
+      if (!await confirmAction('Clear saved API key?', 'Receipt reading will be unavailable without a configured key after you save.', null, 'Clear saved key') || state.editor !== editor) return;
+      draft.keyAction = 'clear'; draft.apiKey = ''; input.value = ''; markDirty(); refresh();
+    }, 'danger'));
+    body.append(staged); refresh();
+  }
+}
+function aiDefaultFilters(days = 30) {
+  const to = new Date(); const from = new Date(to); from.setUTCDate(from.getUTCDate() - days + 1);
+  return { period: String(days), from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10), groupId: '', status: '' };
+}
+function aiTable(label, columns, rows) {
+  const region = node('div', null, 'ai-table-scroll'); region.tabIndex = 0; region.setAttribute('role', 'region'); region.setAttribute('aria-label', `${label}, scroll for all columns`);
+  const table = node('table', null, 'ai-table'); table.append(node('caption', label)); const head = node('thead'); const heading = node('tr');
+  for (const [title] of columns) { const cell = node('th', title); cell.scope = 'col'; heading.append(cell); } head.append(heading); table.append(head);
+  const body = node('tbody');
+  for (const row of rows) { const tr = node('tr'); for (const [, value] of columns) { const cell = node('td'); const content = value(row); if (content instanceof Node) cell.append(content); else cell.textContent = content; tr.append(cell); } body.append(tr); }
+  if (!rows.length) { const cell = node('td', 'No calls match these filters.'); cell.colSpan = columns.length; body.append(append(node('tr'), cell)); }
+  table.append(body); region.append(table); return region;
+}
+function renderReceiptAI(root, settings) {
+  const view = state.receiptAI ||= { draft: aiDefaultFilters(), applied: null, data: null, offset: 0, request: 0, surface: null };
+  disposePickersWithin(root); root.replaceChildren(pageHeader('Receipt AI', 'Receipt reading settings and API usage.'));
+  const announcement = node('p', '', 'receipt-ai-announcement'); announcement.setAttribute('role', 'status'); root.append(announcement);
+  view.surface = root; const epoch = state.sessionGeneration; const generation = state.generation;
+  const current = () => state.receiptAI === view && state.route.page === 'receipt-ai' && epoch === state.sessionGeneration && generation === state.generation && Boolean(state.adminUsername);
+  const configuration = node('section', null, 'stack card'); configuration.append(node('h2', 'Configuration'));
+  const facts = node('dl', null, 'ai-summary');
+  for (const [label, value] of [['Receipt reading', settings.enabled ? 'Enabled' : 'Disabled'], ['OpenAI API key', `${settings.keyConfigured ? 'Configured' : 'Not configured'}${settings.keySource === 'environment' ? ' · Environment-managed' : ''}`]]) facts.append(node('dt', label), node('dd', value));
+  const technical = node('details'); technical.append(node('summary', 'Technical details'), entity([['Model', settings.model], ['Reasoning', settings.reasoningEffort]]));
+  configuration.append(facts, button('Edit settings', () => openEditor('receipt-ai-settings', settings)), technical);
+  if (settings.unavailableReason && settings.unavailableReason !== 'disabled') configuration.append(node('p', aiReason(settings.unavailableReason), 'muted'));
+  root.append(configuration);
+  const filters = node('form', null, 'stack'); filters.noValidate = true; filters.append(node('h2', 'Usage'));
+  const period = node('select'); const periods = [['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days'], ['all', 'All time'], ['custom', 'Custom']];
+  for (const [value, label] of periods) { const option = node('option', label); option.value = value; period.append(option); } period.value = view.draft.period ||= '30';
+  const disclosure = node('details'); disclosure.open = Boolean(view.filtersOpen); disclosure.append(node('summary', 'Filters')); disclosure.ontoggle = () => { view.filtersOpen = disclosure.open; };
+  const grid = node('div', null, 'grid-2'), dates = node('div', null, 'grid-2'), controls = {}; dates.hidden = view.draft.period !== 'custom';
+  const message = node('p', '', 'muted'); message.setAttribute('role', 'status'); const failure = node('div'); failure.setAttribute('role', 'alert');
+  const edited = () => { if (view.data) message.textContent = 'Previous results. Draft filters have not been applied.'; };
+  for (const [key, title] of [['from', 'From (UTC)'], ['to', 'To (UTC)']]) { const input = node('input'); input.type = 'text'; input.inputMode = 'numeric'; input.placeholder = 'YYYY-MM-DD'; input.value = view.draft[key]; input.oninput = () => { view.draft[key] = input.value; view.draft.period = period.value = 'custom'; dates.hidden = false; edited(); }; controls[key] = input; dates.append(labeled(title, input)); }
+  const group = entityPicker({ label: 'Group filter', getSelected: () => view.draft.groupId ? { id: view.draft.groupId, primary: view.draft.groupName || view.draft.groupId, secondary: '' } : null,
+    loadPage: async args => { const page = await jsonFetch(buildPageUrl('/admin/groups', { ...args, sort: 'groupName' }), {}, () => current() && args.isCurrent()); return { ...page, items: page.items.map(group => ({ id: group.groupId, primary: group.groupName, secondary: group.groupId, entity: group })) }; },
+    onSelect: choice => { view.draft.groupId = choice.id; view.draft.groupName = choice.primary; edited(); } });
+  grid.append(group.element, button('All groups', () => { view.draft.groupId = ''; delete view.draft.groupName; group.refresh(); edited(); }));
+  const status = node('select'); for (const value of ['', 'in_flight', 'completed', 'invalid_response', 'refused', 'http_error', 'transport_error', 'timeout', 'interrupted']) { const option = node('option', value ? value.replaceAll('_', ' ') : 'All statuses'); option.value = value; status.append(option); } status.value = view.draft.status; status.onchange = () => { view.draft.status = status.value; edited(); }; grid.append(labeled('Status', status));
+  const apply = node('button', 'Apply filters', 'secondary'); apply.type = 'submit';
+  disclosure.append(dates, grid, apply); filters.append(labeled('Period', period), disclosure, message, failure); root.append(filters); const results = node('section', null, 'stack'); root.append(results);
+  period.onchange = () => {
+    view.draft.period = period.value;
+    dates.hidden = period.value !== 'custom';
+    if (period.value === 'custom') { disclosure.open = true; edited(); return; }
+    const range = period.value === 'all' ? { from: '', to: '' } : aiDefaultFilters(Number(period.value));
+    for (const key of ['from', 'to']) controls[key].value = view.draft[key] = range[key];
+    const selected = { ...(view.applied || view.draft), ...range, period: period.value };
+    selected.groupId = view.applied ? view.applied.groupId : view.draft.groupId; selected.groupName = view.applied ? view.applied.groupName : view.draft.groupName; selected.status = view.applied ? view.applied.status : view.draft.status;
+    void load(selected, 0);
+  };
+  filters.onsubmit = event => { event.preventDefault(); if (!view.loading) void load({ ...view.draft }, 0); };
+  function report() {
+    results.replaceChildren(); if (!view.data) return;
+    const data = view.data; const applied = view.applied; const periodLabel = periods.find(([value]) => value === applied.period)?.[1] || 'Custom';
+    results.append(node('h2', 'Call history'), node('p', `${periodLabel} · UTC ${applied.from || 'unbounded'} to ${applied.to || 'unbounded'} · ${applied.groupName || applied.groupId || 'all groups'} · ${(applied.status || 'all statuses').replaceAll('_', ' ')}`, 'muted'));
+    const summary = node('dl', null, 'ai-summary'); const summaryFields = [['Calls', 'calls'], ['Completed', 'completed'], ['Failed', 'failed']];
+    if (data.summary.inFlight !== '0') summaryFields.push(['In progress', 'inFlight']);
+    if (data.summary.unpricedCalls !== '0') summaryFields.push(['Unknown cost', 'unpricedCalls']);
+    for (const [label, key] of summaryFields) summary.append(node('dt', label), node('dd', data.summary[key] ?? 'Unknown'));
+    summary.append(node('dt', 'Estimated API cost'), node('dd', nanoUsd(data.summary.estimatedCostNanoUsd))); results.append(summary, node('p', 'Estimate for this installation; calls with unknown cost are excluded.', 'muted'));
+    if (data.summary.calls === '0') results.append(node('p', 'No receipt reading calls in this range.', 'empty-state'));
+    const usage = node('details'); usage.open = Boolean(view.usageOpen); usage.ontoggle = () => { view.usageOpen = usage.open; }; usage.append(node('summary', 'Usage details'));
+    const breakdown = node('dl', null, 'ai-summary');
+    for (const [label, key] of [['Priced calls', 'pricedCalls'], ['Unpriced calls', 'unpricedCalls'], ['Reported input tokens', 'inputTokens'], ['Reported cached input tokens', 'cachedInputTokens'], ['Reported output tokens', 'outputTokens'], ['Reported reasoning tokens (included in output)', 'reasoningTokens']]) breakdown.append(node('dt', label), node('dd', data.summary[key] ?? 'Unknown'));
+    breakdown.append(node('dt', 'Average provider time'), node('dd', data.summary.averageDurationMs === null ? 'Unknown' : `${data.summary.averageDurationMs} ms`));
+    usage.append(breakdown, node('p', 'Estimated API cost uses reported usage and saved model prices, not an invoice or account-wide bill. Reported token sums exclude missing counts. Failed includes every terminal status except completed; old unfinished attempts appear interrupted.', 'muted'));
+    const unknown = value => value === null || value === undefined ? 'Unknown' : value;
+    const common = [['Calls', row => row.calls], ['Completed', row => row.completed], ['Failed', row => row.failed], ['In flight', row => row.inFlight], ['Priced', row => row.pricedCalls], ['Unpriced', row => row.unpricedCalls], ['Reported input', row => unknown(row.inputTokens)], ['Reported cached input', row => unknown(row.cachedInputTokens)], ['Reported output', row => unknown(row.outputTokens)], ['Reported reasoning', row => unknown(row.reasoningTokens)], ['Average provider time', row => row.averageDurationMs === null ? 'Unknown' : `${row.averageDurationMs} ms`], ['Estimated API cost', row => nanoUsd(row.estimatedCostNanoUsd)]];
+    usage.append(aiTable('Daily usage (UTC)', [['UTC day', row => row.day], ...common], data.daily), aiTable('Usage by model', [['Model', row => row.model], ...common], data.byModel)); results.append(usage);
+    const callDetails = row => { const details = node('details'); details.append(node('summary', 'Details'), entity([['Model', row.model], ['Input tokens', unknown(row.inputTokens)], ['Cached input tokens', unknown(row.cachedInputTokens)], ['Output tokens', unknown(row.outputTokens)], ['Reasoning tokens', unknown(row.reasoningTokens)], ['Provider time', row.durationMs === null ? 'Unknown' : `${row.durationMs} ms`]])); return details; };
+    results.append(aiTable('Receipt reading calls', [['Time (UTC)', row => row.startedAt], ['Group', row => row.groupName || row.groupId || 'Deleted group'], ['Actor', row => row.actorLabel], ['Status', row => row.status.replaceAll('_', ' ')], ['Estimated API cost', row => nanoUsd(row.estimatedCostNanoUsd)], ['Details', callDetails]], data.calls.items));
+    const info = data.calls.pageInfo; const pager = node('div', null, 'pager');
+    const previous = button('Previous calls', () => load({ ...view.applied }, Math.max(0, info.offset - info.limit))); const next = button('Next calls', () => load({ ...view.applied }, info.offset + info.limit)); previous.disabled = !info.hasPrev || view.loading; next.disabled = !info.hasNext || view.loading;
+    pager.append(previous, node('p', `${info.total ? info.offset + 1 : 0}–${Math.min(info.offset + info.limit, info.total)} of ${info.total} calls`), next); results.append(pager);
+  }
+  async function load(selected, offset) {
+    if (view.loading) return;
+    const request = ++view.request; const isCurrent = () => current() && request === view.request;
+    failure.replaceChildren();
+    try {
+      for (const key of ['from', 'to']) if (selected[key] && !RM.validReceiptDate(selected[key])) { disclosure.open = true; controls[key].focus(); throw new Error('Choose valid full UTC dates.'); }
+      if (selected.from && selected.to && selected.from > selected.to) { disclosure.open = true; controls.from.focus(); throw new Error('From must not be after To.'); }
+      const params = new URLSearchParams({ offset: String(offset), limit: '20' }); for (const key of ['from', 'to', 'groupId', 'status']) if (selected[key]) params.set(key, selected[key]);
+      view.loading = true; apply.disabled = period.disabled = true; message.textContent = view.data ? 'Loading usage. Previous results remain below.' : 'Loading receipt reading usage…'; results.setAttribute('aria-busy', 'true');
+      results.querySelectorAll('.pager button').forEach(control => { control.disabled = true; });
+      const data = await jsonFetch(`/admin/receipt-ai/usage?${params}`, {}, isCurrent); if (!isCurrent()) return;
+      view.data = data; view.applied = selected; view.offset = data.calls.pageInfo.offset; view.loading = false; message.textContent = ['from', 'to', 'groupId', 'status'].some(key => view.draft[key] !== selected[key]) ? 'Previous results. Draft filters have not been applied.' : ''; report(); announcement.textContent = 'Receipt AI usage loaded.';
+    } catch (error) { if (isCurrent() && !error.stale) { message.textContent = view.data ? 'Previous results. New filters were not applied.' : 'Usage could not be loaded.'; disclosure.open = true; failure.append(node('p', errorMessage(error), 'error'), button('Retry usage', () => load(selected, offset))); } }
+    finally { if (request === view.request) view.loading = false; if (isCurrent()) { results.removeAttribute('aria-busy'); apply.disabled = period.disabled = false; const buttons = results.querySelectorAll('.pager button'); if (view.data && buttons.length === 2) { buttons[0].disabled = !view.data.calls.pageInfo.hasPrev; buttons[1].disabled = !view.data.calls.pageInfo.hasNext; } } }
+  }
+  view.loading = false; report(); void load({ ...(view.applied || view.draft) }, view.offset);
+}
+
+const RM = globalThis.JizhangReceiptMath;
+function receiptRolesChanged(record) {
+  const editor = state.editor;
+  if (editor?.kind !== 'receipt' || !editor.draft.source?.review) return;
+  const signature = JSON.stringify([record.byUserId, record.mode, [...record.selected], [...(record.values[record.mode] || [])]]);
+  if (record.roleSignature !== undefined && record.roleSignature !== signature) editor.resetReceiptRoles?.();
+  record.roleSignature = signature;
+}
+function validateReviewedReceiptRecords(editor) {
+  const source = editor.draft.source;
+  const rows = RM.validateReceiptImportReview(editor.catalog, source.evidence, source.review);
+  if (rows.length !== editor.draft.records.length || rows.some((row, index) => {
+    const record = editor.draft.records[index];
+    return record.importItemId !== row.itemId || record.currency.code !== source.review.currency || draftAmount(record) !== row.amountMinor;
+  })) throw new Error('Return to receipt review to reconcile the expense amounts.');
+}
+function receiptReviewDraft(evidence) {
+  const value = observation => observation?.value ?? '';
+  return { mode: 'itemized', merchant: value(evidence.merchant), totalTitle: value(evidence.merchant) || 'Receipt expense',
+    currency: evidence.currency.code || '', date: /^\d{4}-\d{2}-\d{2}$/.test(value(evidence.transaction_date)) ? value(evidence.transaction_date) : '',
+    totalBasis: value(evidence.totals.final_paid) ? 'final_paid' : value(evidence.totals.printed_total) ? 'printed_total' : 'user_entered',
+    printedTotal: value(evidence.totals.printed_total), finalPaid: value(evidence.totals.final_paid), total: value(evidence.totals.final_paid) || value(evidence.totals.printed_total),
+    tipDecision: '', actualTip: '', acknowledged: new Set(),
+    items: evidence.items.map(item => ({ id: item.id, title: item.description, amount: value(item.line_total), quantity: value(item.quantity), unit: value(item.unit), unitPrice: value(item.unit_price) })),
+    adjustments: evidence.adjustments.map(adjustment => ({ id: adjustment.id, kind: adjustment.kind, amount: value(adjustment.amount), treatment: adjustment.treatment === 'unknown' ? '' : adjustment.treatment, itemIds: [] })) };
+}
+function canonicalReceiptReview(editor) {
+  const draft = editor.reviewDraft; const currency = editor.catalog.find(currency => currency.code === draft.currency);
+  if (!currency) throw new Error('Choose a supported currency.');
+  if (!RM.validReceiptDate(draft.date)) throw new Error('Choose a valid full receipt date.');
+  const amount = (text, optional = false) => optional && text === '' ? null : M.parseMajorAmount(text, { minorDigits: currency.minorUnits, allowZero: true }).toString();
+  if (!draft.tipDecision) throw new Error('Choose an actual-tip decision. Suggested tips are not actual payments.');
+  const acknowledgedWarnings = [...draft.acknowledged];
+  if (draft.tipDecision === 'bill_only') acknowledgedWarnings.push('bill_only:tipDecision');
+  return RM.validateReview({ mode: draft.mode, merchant: draft.merchant, totalTitle: draft.totalTitle, currency: currency.code, date: draft.date, totalBasis: draft.totalBasis,
+    printedTotalMinor: amount(draft.printedTotal, true), finalPaidMinor: amount(draft.finalPaid, true), totalMinor: amount(draft.total), tipDecision: draft.tipDecision,
+    actualTipMinor: draft.tipDecision === 'bill_only' ? null : draft.tipDecision === 'none' ? '0' : amount(draft.actualTip),
+    items: draft.mode === 'total' ? [] : draft.items.map(item => ({ id: item.id, title: item.title, amountMinor: amount(item.amount), quantity: item.quantity || null, unit: item.unit || null, unitPrice: item.unitPrice || null })),
+    adjustments: draft.mode === 'total' ? [] : draft.adjustments.map(adjustment => ({ id: adjustment.id, kind: adjustment.kind, amountMinor: amount(adjustment.amount), treatment: adjustment.treatment, itemIds: [...adjustment.itemIds] })), acknowledgedWarnings, confirmed: true });
+}
+function receiptImageView(parent, media, image) {
+  const url = media.createImageUrl(image); const imageNode = node('img'); imageNode.src = url; imageNode.alt = 'Receipt photo';
+  const scroll = node('div', null, 'receipt-image-scroll'); scroll.tabIndex = 0; scroll.setAttribute('role', 'region'); scroll.setAttribute('aria-label', 'Receipt photo, scroll to inspect'); scroll.append(imageNode);
+  const zoom = node('input'); zoom.type = 'range'; zoom.min = '100'; zoom.max = '300'; zoom.step = '25'; zoom.value = '100';
+  zoom.oninput = () => { imageNode.style.width = `${zoom.value}%`; imageNode.style.maxWidth = 'none'; };
+  parent.append(labeled('Image zoom', zoom), scroll);
+  return () => { imageNode.removeAttribute('src'); media.releaseImageUrl(url); };
+}
+function receiptAssociation(groupId, summary) {
+  if (!summary) return null;
+  const action = button(`Receipt: ${summary.title}`, () => openAssociatedReceipt(groupId, summary.receiptId), 'secondary receipt-association', `receipt-${summary.receiptId}`);
+  action.setAttribute('aria-label', `Open receipt: ${summary.title}`);
+  return action;
+}
+function closeAssociatedReceipt(restore = true) {
+  const viewer = state.receiptViewer; if (!viewer) return;
+  state.receiptViewer = null;
+  if (state.sourceViewer?.parentReceiptViewer === viewer) closeReceiptSource(false);
+  viewer.dialog.close(); viewer.dialog.replaceChildren(); viewer.dialog.remove();
+  if (restore && viewer.focus.element?.isConnected) restoreFocus(viewer.focus);
+}
+async function openAssociatedReceipt(groupId, receiptId) {
+  if (state.receiptViewer || state.editor?.pending || !state.adminUsername || state.route.groupId !== groupId) return;
+  const dialog = node('dialog', null, 'receipt-source-dialog');
+  const heading = node('h2', 'Receipt'); heading.id = 'associated-receipt-title'; dialog.setAttribute('aria-labelledby', heading.id);
+  const header = append(node('header', null, 'dialog-header'), heading, button('Close', () => closeAssociatedReceipt()));
+  const body = node('div', null, 'dialog-body stack'); dialog.append(header, body);
+  const viewer = { dialog, focus: focusReference(), epoch: state.sessionGeneration, editor: state.editor, groupId, loading: false };
+  state.receiptViewer = viewer;
+  const current = () => state.receiptViewer === viewer && viewer.epoch === state.sessionGeneration && Boolean(state.adminUsername)
+    && state.route.groupId === groupId && state.editor === viewer.editor;
+  dialog.addEventListener('cancel', event => { event.preventDefault(); event.stopPropagation(); closeAssociatedReceipt(); });
+  document.body.append(dialog); dialog.showModal(); header.querySelector('button').focus();
+  async function load() {
+    if (!current() || viewer.loading) return;
+    viewer.loading = true; body.replaceChildren(node('p', 'Loading receipt…', 'muted')); body.setAttribute('aria-busy', 'true');
+    try {
+      const receipt = await jsonFetch(`${groupApi(groupId)}/receipts/${encodeURIComponent(receiptId)}`, {}, current);
+      if (!current()) return;
+      body.replaceChildren(node('h3', receipt.title), field('Receipt note', node('p', receipt.note || '(No note)', 'receipt-note')), field('Uploader', userLabel(receipt.uploadedBy)),
+        field('Totals', receiptTotals(receipt.records)), field('Created', receipt.createdAt));
+      if (receipt.source) body.append(button('View photo', () => openReceiptSource(groupId, receiptId)));
+      body.append(node('h3', 'Expenses'));
+      if (!receipt.records.length) body.append(node('p', 'No expenses in this receipt.', 'muted'));
+      for (const record of receipt.records) body.append(append(node('article', null, 'stack gap-sm'), node('h4', record.title),
+        node('p', `${recordMoney(record)} · ${record.date}`), recordDetails(record)));
+    } catch (error) {
+      if (current() && !error.stale) {
+        body.replaceChildren(node('p', error.status === 404 ? 'Receipt is no longer available.' : errorMessage(error), 'error'));
+        if (error.status !== 404) body.append(button('Retry receipt', load));
+      }
+    } finally { viewer.loading = false; if (current()) body.removeAttribute('aria-busy'); }
+  }
+  await load();
+}
+function closeReceiptSource(restore = true) {
+  const viewer = state.sourceViewer; if (!viewer) return; state.sourceViewer = null;
+  viewer.media.dispose(); viewer.dialog.close(); viewer.dialog.replaceChildren(); viewer.dialog.remove();
+  if (restore) restoreFocus(viewer.focus);
+}
+async function openReceiptSource(groupId, receiptId) {
+  if (state.sourceViewer) return;
+  const dialog = node('dialog', null, 'receipt-source-dialog'); const header = node('header', null, 'dialog-header'); const title = node('h2', 'Receipt photo'); title.id = 'receipt-source-title'; dialog.setAttribute('aria-labelledby', title.id);
+  header.append(title, button('Close', () => closeReceiptSource(), 'secondary'));
+  const body = node('div', null, 'dialog-body stack'); dialog.append(header, body);
+  const viewer = { dialog, media: globalThis.JizhangReceiptMedia.create(), focus: focusReference(), epoch: state.sessionGeneration, parentReceiptViewer: state.receiptViewer }; state.sourceViewer = viewer;
+  const current = () => state.sourceViewer === viewer && viewer.epoch === state.sessionGeneration;
+  dialog.addEventListener('cancel', event => { event.preventDefault(); event.stopPropagation(); closeReceiptSource(); });
+  document.body.append(dialog); dialog.showModal(); header.querySelector('button').focus();
+  async function load() {
+    body.replaceChildren(node('p', 'Loading receipt photo…', 'muted'));
+    try {
+      const source = await jsonFetch(`${groupApi(groupId)}/receipts/${encodeURIComponent(receiptId)}/source`, {}, current);
+      if (!current()) return; body.replaceChildren(); receiptImageView(body, viewer.media, source.image);
+      if (source.review) {
+        const details = node('details'); details.append(node('summary', 'Import details'));
+        details.append(entity([['Merchant', source.review.merchant], ['Date', source.review.date], ['Currency', source.review.currency], ['Record as', source.review.mode === 'itemized' ? 'Item expenses' : 'One expense']])); body.append(details);
+      }
+    } catch (error) { if (current() && !error.stale) body.replaceChildren(node('p', errorMessage(error), 'error'), button('Retry photo', load)); }
+  }
+  await load();
+}
+function renderReceiptImport(body, editor) {
+  const draft = editor.draft; const epoch = state.sessionGeneration; const current = () => state.editor === editor && epoch === state.sessionGeneration;
+  editor.media = globalThis.JizhangReceiptMedia.create(); editor.catalog = []; editor.options = null;
+  const surface = node('section', null, 'stack receipt-import'); const tools = node('div', null, 'row-actions'); const status = node('p', 'Loading image import options…', 'muted'); status.setAttribute('role', 'status');
+  const content = node('div', null, 'stack'); const roles = node('div', null, 'stack'); roles.hidden = true;
+  const roleCheck = node('input'); roleCheck.type = 'checkbox'; roleCheck.onchange = () => { editor.rolesConfirmed = roleCheck.checked; markDirty(); };
+  roles.append(labeled('I confirm the displayed payers and splits', roleCheck));
+  editor.resetReceiptRoles = () => { editor.rolesConfirmed = false; roleCheck.checked = false; };
+  editor.receiptImportRender = () => { roles.hidden = !draft.source?.review || editor.reviewEditing; const save = $('#editor-save'); save.formNoValidate = Boolean(editor.reviewEditing); save.hidden = Boolean(editor.image && !editor.reviewEditing && draft.source?.image !== editor.image); save.disabled = Boolean(editor.pending || editor.extracting || editor.loadingSource); save.textContent = editor.reviewEditing ? 'Continue' : 'Save receipt'; editor.receiptSelectionRender?.(); };
+  editor.returnToReceiptReview = () => {
+    if (receiptBatchBlocked(editor)) return;
+    if (!editor.reviewDraft && editor.appliedImport) { editor.image = editor.appliedImport.image; editor.importEvidence = editor.appliedImport.evidence; editor.extractionId = editor.appliedImport.extractionId; editor.reviewDraft = structuredClone(editor.appliedImport.draft); }
+    if (!editor.reviewDraft) return; editor.reviewCancelDraft = structuredClone(editor.reviewDraft); editor.reviewDraft.acknowledged.clear(); editor.reviewEditing = true; render(); surface.scrollIntoView({ block: 'start' }); content.querySelector('input,select')?.focus();
+  };
+  surface.append(node('h3', 'Receipt photo'), tools, status, content, roles); body.append(surface);
+  function sourceControls() {
+    tools.replaceChildren();
+    const selected = Boolean(editor.image || editor.original?.source && draft.source !== null);
+    const canPick = Boolean(editor.options?.maxImageBytes && editor.media.supported);
+    const canUseCamera = Boolean(editor.options?.maxImageBytes && editor.media.cameraSupported);
+    if (!selected) {
+      const pick = button('Upload photo', () => selectImage(false)), camera = button('Take photo', () => selectImage(true));
+      pick.disabled = !canPick || receiptBatchBlocked(editor); camera.disabled = !canUseCamera || receiptBatchBlocked(editor);
+      tools.append(pick, camera);
+      return;
+    }
+    const options = node('details', null, 'receipt-photo-options'); options.open = Boolean(editor.photoOptionsOpen);
+    options.ontoggle = () => { editor.photoOptionsOpen = options.open; };
+    options.append(node('summary', 'Photo options'));
+    const actions = node('div', null, 'receipt-photo-actions');
+    function action(label, description, callback, destructive = false) {
+      const row = button(label, callback, `secondary receipt-photo-action${destructive ? ' error receipt-photo-action-remove' : ''}`);
+      const helper = node('span', description, 'receipt-photo-action-description');
+      helper.id = `receipt-photo-${label.toLowerCase().replaceAll(' ', '-')}-description`;
+      row.replaceChildren(node('span', label), helper);
+      row.setAttribute('aria-label', label); row.setAttribute('aria-describedby', helper.id);
+      row.disabled = receiptBatchBlocked(editor); actions.append(row);
+    }
+    const savedSource = Boolean(editor.original?.source && draft.source === undefined);
+    if (savedSource) action('View photo', 'Open the saved photo.', () => openReceiptSource(editor.groupId, editor.id));
+    if (editor.reviewDraft && !editor.reviewEditing) action('Review photo', 'Edit the current receipt details.', editor.returnToReceiptReview);
+    else if (savedSource && editor.catalog.length) action('Review photo', 'Edit the saved receipt details.', reviewSavedSource);
+    if (editor.options?.available && editor.image && (editor.reviewDraft || draft.source?.image === editor.image))
+      action('Read again', 'Send this photo to OpenAI again; API charges may apply.', extract);
+    if (canPick) action('Replace photo', 'Choose a different photo from your device.', () => selectImage(false));
+    if (canUseCamera) action('Take photo', 'Use your camera to replace this photo.', () => selectImage(true));
+    action('Remove photo', 'Remove the photo when you save; keep the expenses.', async () => {
+      if (!await confirmAction('Remove photo?', 'Remove the photo when you save. Keep the expenses.', null, 'Remove photo')) return;
+      if (!current()) return; draft.source = null; editor.image = null; editor.importEvidence = null; editor.reviewDraft = null; editor.appliedImport = null; editor.reviewEditing = false;
+      unlockRecords(); editor.releasePreview?.(); editor.releasePreview = null; editor.dirty = true; render();
+    }, true);
+    options.append(actions); tools.append(options);
+  }
+  function unlockRecords() { for (const record of draft.records) record.importLocked = false; editor.renderReceiptItems?.(); }
+  async function reviewSavedSource() {
+    if (!current() || receiptBatchBlocked(editor) || !editor.catalog.length) return;
+    const previous = { image: editor.image, evidence: editor.importEvidence, extractionId: editor.extractionId, reviewDraft: editor.reviewDraft, appliedImport: editor.appliedImport };
+    const generation = editor.imageGeneration = (editor.imageGeneration || 0) + 1;
+    editor.loadingSource = true; editor.receiptSelectionRender?.(); render();
+    try {
+      const source = await jsonFetch(`${groupApi(editor.groupId)}/receipts/${encodeURIComponent(editor.id)}/source`, {}, () => current() && generation === editor.imageGeneration);
+      if (!current() || generation !== editor.imageGeneration) return;
+      editor.releasePreview?.(); editor.releasePreview = null; editor.image = source.image;
+      editor.importEvidence = source.evidence === null ? null : RM.validateEvidence(source.evidence);
+      editor.extractionId = source.extractionId; editor.appliedImport = null;
+      if (source.review !== null) {
+        const review = RM.validateReview(source.review);
+        const currency = editor.catalog.find(currency => currency.code === review.currency);
+        if (!currency) throw new Error('The historical review currency is not in the current catalog. Upload an image or enter expenses manually.');
+        const amount = value => value === null ? '' : major(BigInt(value), currency);
+        editor.reviewDraft = {
+          mode: review.mode, merchant: review.merchant, totalTitle: review.totalTitle,
+          currency: review.currency, date: review.date, totalBasis: review.totalBasis,
+          printedTotal: amount(review.printedTotalMinor), finalPaid: amount(review.finalPaidMinor), total: amount(review.totalMinor),
+          tipDecision: review.tipDecision, actualTip: amount(review.actualTipMinor), acknowledged: new Set(),
+          items: review.items.map(item => ({ id: item.id, title: item.title, amount: amount(item.amountMinor), quantity: item.quantity ?? '', unit: item.unit ?? '', unitPrice: item.unitPrice ?? '' })),
+          adjustments: review.adjustments.map(charge => ({ id: charge.id, kind: charge.kind, amount: amount(charge.amountMinor), treatment: charge.treatment, itemIds: [...charge.itemIds] })),
+        };
+        editor.reviewEditing = true;
+      } else { editor.reviewDraft = null; editor.reviewEditing = false; }
+      editor.reviewCancelDraft = null; editor.reviewCancelState = previous;
+    } finally {
+      if (current()) {
+        editor.loadingSource = false; editor.receiptSelectionRender?.(); render();
+        content.querySelector('input,select')?.focus();
+      }
+    }
+  }
+  async function selectImage(camera) {
+    if (!current() || receiptBatchBlocked(editor) || !editor.options?.maxImageBytes) return;
+    const generation = editor.imageGeneration = (editor.imageGeneration || 0) + 1;
+    const image = await editor.media[camera ? 'takePhoto' : 'pickImage']({ maxBytes: editor.options.maxImageBytes });
+    if (!current() || generation !== editor.imageGeneration || !image) return;
+    if ((editor.image || draft.source?.review) && !await confirmAction('Replace photo?', 'Choose Read receipt to read the replacement. Using reviewed expenses replaces the displayed expenses.', null, 'Replace photo')) return;
+    if (!current()) return; editor.releasePreview?.(); editor.releasePreview = null; editor.image = image; editor.importEvidence = null; editor.reviewDraft = null; editor.reviewEditing = false; editor.photoOptionsOpen = false; editor.photoPrivacyOpen = false; editor.dirty = true; render();
+  }
+  async function extract() {
+    if (!current() || receiptBatchBlocked(editor) || !editor.image || !editor.options?.available) return;
+    if (editor.reviewDraft && !await confirmAction('Read this photo again?', 'Send this photo to OpenAI again and replace the current review. API charges may apply. Using reviewed expenses replaces the displayed expenses.', null, 'Read again')) return;
+    if (!current() || receiptBatchBlocked(editor)) return; editor.extracting = true; editor.receiptSelectionRender?.(); render();
+    const generation = editor.imageGeneration;
+    try {
+      const response = await jsonFetch(`${groupApi(editor.groupId)}/receipt-extractions`, { method: 'POST', body: JSON.stringify(editor.image) }, () => current() && generation === editor.imageGeneration);
+      if (!current() || generation !== editor.imageGeneration) return;
+      if (!Object.hasOwn(response, 'title')) throw new Error('The server returned an invalid response format.');
+      const suggestedTitle = response.title === null ? null : normalizeReceiptTitle(response.title);
+      const evidence = RM.validateEvidence(response.evidence);
+      editor.importEvidence = evidence; editor.extractionId = response.extractionId; editor.reviewDraft = receiptReviewDraft(evidence); editor.reviewEditing = true;
+      if (suggestedTitle !== null && !editor.titleEdited && !draft.title && editor.lastTitleSuggestionExtractionId !== response.extractionId) {
+        draft.title = suggestedTitle;
+        const input = $('#editor-body').querySelector('[data-receipt-title]');
+        if (input) input.value = suggestedTitle;
+      }
+      editor.lastTitleSuggestionExtractionId = response.extractionId;
+      announce('Receipt read. Review the displayed details.');
+    } finally { if (current()) { editor.extracting = false; editor.receiptSelectionRender?.(); render(); content.querySelector('input,select')?.focus(); } }
+  }
+  async function useReview() {
+    if (!current() || receiptBatchBlocked(editor)) return;
+    if (!validateReceiptTitle(editor)) return;
+    const review = canonicalReceiptReview(editor); const rows = RM.validateReceiptImportReview(editor.catalog, editor.importEvidence, review);
+    if (draft.records.length && !await confirmAction('Replace displayed expenses?', 'Using reviewed expenses replaces the displayed expenses, including their titles, dates, payers, splits and exchange rates.', null, 'Continue')) return;
+    if (!current()) return; const currency = editor.catalog.find(currency => currency.code === review.currency);
+    const records = rows.map(row => { const record = splitRecordDraft(null, 'expense'); record.currency = currency; record.title = row.title; record.amount = major(row.amountMinor, currency); record.date = review.date; record.byUserId = state.group.members.some(member => member.userId === draft.uploadedByUserId) ? draft.uploadedByUserId : state.group.members[0]?.userId || ''; record.importLocked = true; record.importItemId = row.itemId; return record; });
+    for (const record of draft.records) retireDraft(record);
+    draft.records = records; draft.source = { image: editor.image, extractionId: editor.extractionId, evidence: editor.importEvidence, review: RM.validateReview(review) };
+    editor.appliedImport = { image: editor.image, evidence: editor.importEvidence, extractionId: editor.extractionId, draft: structuredClone(editor.reviewDraft) };
+    editor.receiptSelection.clear(); editor.resetReceiptRoles(); editor.reviewCancelState = null; editor.reviewCancelDraft = null; editor.reviewEditing = false; editor.dirty = true; editor.renderReceiptItems(); render();
+  }
+  function render() {
+    editor.submitReceiptReview = null; editor.releasePreview?.(); editor.releasePreview = null; disposePickersWithin(content); content.replaceChildren(); sourceControls();
+    status.textContent = editor.loadingSource ? 'Loading receipt photo…' : editor.extracting ? 'Reading receipt. This request may still be charged.' : !editor.options ? 'Loading photo options…' : !editor.options.available ? 'Receipt reading is unavailable. Enter expenses manually or retry.' : ''; status.hidden = !status.textContent;
+    editor.receiptImportRender();
+    if (!editor.image) return;
+    const layout = node('div', null, 'receipt-review-layout'); const preview = node('div', null, 'stack receipt-preview'); const fields = node('div', null, 'stack receipt-review-fields'); layout.append(preview, fields); content.append(layout);
+    editor.releasePreview = receiptImageView(preview, editor.media, editor.image);
+    const privacy = node('details'); privacy.open = Boolean(editor.photoPrivacyOpen); privacy.ontoggle = () => { editor.photoPrivacyOpen = privacy.open; }; privacy.append(node('summary', 'Photo privacy'), node('p', 'Photos are saved with the receipt and visible to its group. OpenAI handles submitted photos under its API terms.')); preview.append(privacy);
+    if (editor.extracting || editor.loadingSource) return;
+    if (!editor.reviewEditing) {
+      if (draft.source?.image !== editor.image) {
+        const read = button('Read receipt', extract, 'primary'); read.disabled = !editor.options?.available || receiptBatchBlocked(editor); fields.append(read, node('p', 'Sends this photo to OpenAI; API charges may apply.', 'muted'));
+        fields.append(button('Enter manually', async () => {
+          if (draft.source?.review && !await confirmAction('Enter manually?', 'The reviewed source is removed from this draft. Current expense amounts remain unchanged and become manually editable.', null, 'Enter manually')) return;
+          if (!current() || receiptBatchBlocked(editor)) return; draft.source = { image: editor.image, extractionId: null, evidence: null, review: null }; editor.appliedImport = null; editor.dirty = true; unlockRecords(); render();
+        }));
+      }
+      return;
+    }
+    editor.submitReceiptReview = renderReceiptReviewFields(fields, editor, render, useReview); fields.append(button('Cancel review', () => {
+      if (editor.reviewCancelState) { const previous = editor.reviewCancelState; editor.image = previous.image; editor.importEvidence = previous.evidence; editor.extractionId = previous.extractionId; editor.reviewDraft = previous.reviewDraft; editor.appliedImport = previous.appliedImport; editor.reviewCancelState = null; }
+      else if (editor.reviewCancelDraft) editor.reviewDraft = editor.reviewCancelDraft;
+      else if (editor.appliedImport) editor.reviewDraft = structuredClone(editor.appliedImport.draft);
+      editor.reviewEditing = false; render();
+    }));
+  }
+  async function loadOptions() {
+    if (!current() || receiptBatchBlocked(editor)) return;
+    try { const [options, catalog] = await Promise.all([jsonFetch(`${groupApi(editor.groupId)}/receipt-extractions/options`, {}, current), getCurrencies(current)]); if (!current()) return; editor.options = options; editor.catalog = catalog; render(); }
+    catch (error) { if (current() && !error.stale) { status.textContent = errorMessage(error); tools.replaceChildren(button('Retry image options', loadOptions)); } }
+  }
+  tools.append(button('Retry photo options', loadOptions)); void loadOptions();
+}
+function renderReceiptReviewFields(parent, editor, rerender, useReview) {
+  const draft = editor.reviewDraft, evidence = editor.importEvidence, controls = [], presentation = draft.presentation ||= {};
+  const results = node('div', null, 'stack'); results.setAttribute('role', 'status');
+  const warnings = node('details'); warnings.open = presentation.warnings ?? true; warnings.append(node('summary', 'Check these details')); const warningBody = node('div'); warnings.append(warningBody); warnings.ontoggle = () => { presentation.warnings = warnings.open; };
+  let submitted = false, required = [], candidate = null;
+  const basisLabels = { printed_total: 'Bill total', final_paid: 'Amount paid', user_entered: 'Entered total' };
+  const basisExplanations = {
+    printed_total: 'Use the bill total printed on the receipt. Enter the same amount in Total and Bill total.',
+    final_paid: 'Use the final amount you paid. Enter the same amount in Total and Amount paid.',
+    user_entered: 'Records the amount you entered in Total.',
+  };
+  const basisSummary = node('small', '', 'muted'), basisExplanation = node('p', '', 'muted');
+  const referenceFields = [];
+  function help(target, copy) { const paragraph = node('p', copy, 'muted'); target.append(paragraph); return paragraph; }
+  function reference(target, label, key, basis, optionalHelp) {
+    const input = text(target, label, draft, key), hint = help(target, '');
+    referenceFields.push({ input, hint, label, basis, optionalHelp });
+  }
+  function disclosure(target, label, key, initial = false) { const details = node('details'); details.open = presentation[key] ?? initial; details.append(node('summary', label)); details.ontoggle = () => { presentation[key] = details.open; }; target.append(details); return details; }
+  function changed(redraw = false) { draft.acknowledged.clear(); markDirty(); if (redraw) rerender(); else update(); }
+  function text(target, label, object, key, options = {}) { const input = inputField(target, label, object, key, { ...options, changed: () => { options.change?.(); changed(); } }); input.required = false; input.dataset.reviewField = key; controls.push([input, object, key]); return input; }
+  function select(target, label, object, key, choices, change) { const input = node('select'); for (const [value, title] of choices) { const option = node('option', title); option.value = value; input.append(option); } input.value = object[key]; input.onchange = () => { object[key] = input.value; change?.(); changed(Boolean(change)); }; input.dataset.reviewField = key; controls.push([input, object, key]); target.append(labeled(label, input)); return input; }
+  function invalid(object, key) {
+    const value = object[key];
+    if (key === 'currency') return !editor.catalog.some(currency => currency.code === value);
+    if (key === 'date') return !RM.validReceiptDate(value);
+    if (key === 'totalBasis') return !basisLabels[value] || draft.tipDecision === 'bill_only' && value === 'final_paid';
+    if (object === draft && (key === 'printedTotal' && draft.totalBasis === 'printed_total' || key === 'finalPaid' && draft.totalBasis === 'final_paid')) {
+      const currency = editor.catalog.find(currency => currency.code === draft.currency);
+      if (!currency) return true;
+      try { return M.parseMajorAmount(value, { minorDigits: currency.minorUnits, allowZero: true }) !== M.parseMajorAmount(draft.total, { minorDigits: currency.minorUnits, allowZero: true }); }
+      catch (_) { return true; }
+    }
+    if (key === 'tipDecision' || key === 'treatment') return !value;
+    if (key === 'itemIds') return !value.length;
+    if (key === 'title' || key === 'totalTitle') return !value.trim();
+    if (['quantity', 'unitPrice'].includes(key) && value !== '') { try { RM.parseReceiptDecimal(value); } catch (_) { return true; } }
+    if (['amount', 'total', 'actualTip'].includes(key) || ['printedTotal', 'finalPaid'].includes(key) && value !== '') { try { const currency = editor.catalog.find(currency => currency.code === draft.currency); if (currency) M.parseMajorAmount(value, { minorDigits: currency.minorUnits, allowZero: key !== 'total' }); } catch (_) { return true; } }
+    return false;
+  }
+  function issueLabel(issue) {
+    const parts = issue.field.split('.');
+    if (parts[0] === 'items') { const index = draft.items.findIndex(item => item.id === parts[1]); return index < 0 ? 'Original receipt item' : `Item ${index + 1}`; }
+    if (parts[0] === 'adjustments') { const charge = draft.adjustments.find(charge => charge.id === parts[1]); return charge ? charge.kind.replaceAll('_', ' ').replace(/^./, c => c.toUpperCase()) : 'Original receipt charge'; }
+    if (parts[0] === 'suggested_tips') return 'Suggested tip';
+    return ({ merchant: 'Merchant', currency: 'Currency', date: 'Date', transaction_date: 'Date', totalMinor: 'Total', actualTipMinor: 'Tip', tipDecision: 'Tip' })[parts[0]] || 'Receipt';
+  }
+  function update() {
+    results.replaceChildren(); warningBody.replaceChildren(); candidate = null;
+    for (const [input, object, key] of controls) { if (key === 'totalBasis') input.value = object[key]; if (key === 'totalTitle' && !draft.totalTitleEdited) input.value = draft.totalTitle; }
+    basisSummary.textContent = basisLabels[draft.totalBasis] ? `Based on: ${basisLabels[draft.totalBasis]}` : 'Choose a total source in Receipt details.';
+    basisExplanation.textContent = basisExplanations[draft.totalBasis] || 'Choose a total source in Receipt details.';
+    for (const { input, hint, label, basis, optionalHelp } of referenceFields) {
+      const selected = draft.totalBasis === basis;
+      input.closest('label').querySelector('span').textContent = selected ? label : `${label} (optional)`;
+      hint.textContent = selected ? 'Enter the same amount as Total.' : optionalHelp;
+    }
+    const unique = new Map(RM.receiptImportEvidenceWarnings(editor.catalog, evidence, draft.mode).map(issue => [RM.warningToken(issue), issue]));
+    try { const review = canonicalReceiptReview(editor); for (const item of review.items) { if (item.quantity !== null) RM.parseReceiptDecimal(item.quantity); if (item.unitPrice !== null) RM.parseReceiptDecimal(item.unitPrice); } candidate = review; for (const issue of RM.receiptReviewNumericWarnings(editor.catalog, review)) unique.set(RM.warningToken(issue), issue); } catch (_) { /* Continue exposes unresolved fields. */ }
+    required = [...unique.values()]; warnings.hidden = !required.length;
+    for (const issue of required) warningBody.append(node('p', `${issueLabel(issue)}: ${issue.message}`));
+    if (candidate && required.length) { const check = node('input'); check.type = 'checkbox'; check.checked = required.every(issue => draft.acknowledged.has(RM.warningToken(issue))); check.onchange = () => { draft.acknowledged = check.checked ? new Set(required.map(RM.warningToken)) : new Set(); markDirty(); update(); }; warningBody.append(labeled('I have checked these details', check)); }
+    if (submitted) for (const [input, object, key] of controls) input.setAttribute('aria-invalid', String(invalid(object, key)));
+    if (!candidate) return;
+    try { const rows = RM.validateReceiptImportReview(editor.catalog, evidence, { ...candidate, acknowledgedWarnings: [...candidate.acknowledgedWarnings, ...required.map(RM.warningToken)] });
+      results.append(node('p', required.some(issue => !draft.acknowledged.has(RM.warningToken(issue))) ? 'Check the details below before continuing.' : `${rows.length} expenses · ${money(candidate.totalMinor, editor.catalog.find(currency => currency.code === draft.currency))}`, 'muted'));
+    } catch (error) { if (submitted || controls.every(([, object, key]) => !invalid(object, key))) results.append(node('p', errorMessage(error), 'error')); }
+  }
+  parent.append(node('h3', 'Review receipt')); const metadata = node('div', null, 'grid-2'); parent.append(metadata);
+  if (draft.totalTitleEdited === undefined) draft.totalTitleEdited = draft.totalTitle !== (draft.merchant || 'Receipt expense');
+  text(metadata, 'Merchant', draft, 'merchant', { change: () => { if (!draft.totalTitleEdited) draft.totalTitle = draft.merchant.trim() ? draft.merchant : 'Receipt expense'; } }); text(metadata, 'Date', draft, 'date', { type: 'date' });
+  select(metadata, 'Currency', draft, 'currency', [['', 'Choose currency'], ...editor.catalog.map(currency => [currency.code, `${currency.code} · ${currency.name}`])], () => {});
+  const totalField = node('div', null, 'stack'); metadata.append(totalField);
+  text(totalField, 'Total', draft, 'total', { change: () => { draft.totalBasis = 'user_entered'; } });
+  help(totalField, 'Amount to record for this receipt, including any known tip.'); totalField.append(basisSummary);
+  if (evidence?.currency.code && draft.currency !== evidence.currency.code) parent.append(node('p', 'Amounts are not converted.', 'muted'));
+  select(parent, 'Tip', draft, 'tipDecision', [['', 'Choose tip'], ['none', 'No tip'], ['confirmed', 'Amount known'], ['bill_only', 'Bill only; tip unknown']], () => {
+    if (draft.tipDecision === 'none') draft.actualTip = '0';
+    if (draft.tipDecision === 'bill_only') { if (draft.totalBasis === 'final_paid') draft.totalBasis = 'user_entered'; draft.actualTip = ''; draft.finalPaid = ''; }
+  });
+  help(parent, ({ none: 'Records a zero tip.', confirmed: 'Enter the tip included in Total.',
+    bill_only: 'Record the bill amount in Total. Choosing this clears Tip amount and Amount paid.' })[draft.tipDecision] || 'Choose whether you left a tip and how much.');
+  if (draft.tipDecision === 'confirmed') {
+    text(parent, 'Tip amount', draft, 'actualTip');
+    if (draft.mode === 'itemized') help(parent, 'The Tip charges in Charges and discounts must add up to this amount.');
+  }
+  if (draft.mode === 'itemized') {
+    parent.append(node('h3', 'Items'));
+    draft.items.forEach((item, index) => { const card = node('fieldset', null, 'stack receipt-review-item'); card.append(node('legend', `Item ${index + 1}`)); const grid = node('div', null, 'grid-2'); card.append(grid); text(grid, 'Item', item, 'title'); text(grid, 'Amount', item, 'amount');
+      const details = disclosure(card, 'Item details', `item:${item.id}`); text(details, 'Quantity (optional)', item, 'quantity'); text(details, 'Unit (optional)', item, 'unit'); text(details, 'Unit price (optional)', item, 'unitPrice');
+      const remove = button('Remove item', () => { draft.items.splice(draft.items.indexOf(item), 1); delete presentation[`item:${item.id}`]; for (const charge of draft.adjustments) charge.itemIds = charge.itemIds.filter(id => id !== item.id); changed(true); }, 'danger'); remove.setAttribute('aria-label', `Remove item ${index + 1}`); card.append(remove); parent.append(card); });
+    parent.append(button('Add item', () => { if (draft.items.length >= 200) throw new Error('At most 200 items are supported.'); let index = 1; while (draft.items.some(item => item.id === `item_${index}`)) index++; draft.items.push({ id: `item_${index}`, title: '', amount: '', quantity: '', unit: '', unitPrice: '' }); changed(true); }));
+    if (draft.adjustments.length) parent.append(node('h3', 'Charges and discounts'));
+    for (const charge of draft.adjustments) { const card = node('fieldset', null, 'stack receipt-review-item'); card.append(node('legend', charge.kind.replaceAll('_', ' ').replace(/^./, c => c.toUpperCase()))); text(card, 'Amount', charge, 'amount');
+      select(card, 'How to apply', charge, 'treatment', [['', 'Choose how to apply'], ['add', 'Add to items'], ['subtract', 'Subtract from items'], ['included_in_line_total', 'Already included'], ['informational', 'Reference only']], () => {});
+      const details = disclosure(card, 'Charge details', `charge:${charge.id}`); select(details, 'Kind', charge, 'kind', ['discount', 'tax', 'service_charge', 'actual_tip', 'rounding', 'other'].map(kind => [kind, kind.replaceAll('_', ' ')]), () => {}); details.append(button('Remove charge', () => { draft.adjustments.splice(draft.adjustments.indexOf(charge), 1); delete presentation[`charge:${charge.id}`]; delete presentation[`eligible:${charge.id}`]; changed(true); }, 'danger'));
+      if (['add', 'subtract'].includes(charge.treatment)) { const applies = node('fieldset'); applies.append(node('legend', 'Applies to'), button('All items', () => { charge.itemIds = draft.items.map(item => item.id); changed(true); })); const choose = disclosure(applies, charge.itemIds.length ? `${charge.itemIds.length} of ${draft.items.length} items · Change` : 'Choose items', `eligible:${charge.id}`); controls.push([choose.querySelector('summary'), charge, 'itemIds']);
+        draft.items.forEach((item, index) => { const check = node('input'); check.type = 'checkbox'; check.checked = charge.itemIds.includes(item.id); check.onchange = () => { charge.itemIds = check.checked ? [...charge.itemIds, item.id] : charge.itemIds.filter(id => id !== item.id); changed(true); }; choose.append(labeled(item.title || `Item ${index + 1}`, check)); }); card.append(applies); } parent.append(card);
+    }
+    parent.append(button('Add charge', () => { if (draft.adjustments.length >= 200) throw new Error('At most 200 charges are supported.'); let index = 1; while (draft.adjustments.some(charge => charge.id === `charge_${index}`)) index++; draft.adjustments.push({ id: `charge_${index}`, kind: 'other', amount: '', treatment: '', itemIds: [] }); changed(true); }));
+  }
+  const details = disclosure(parent, 'Receipt details', 'receipt', draft.mode === 'itemized' && !draft.items.length);
+  select(details, 'Record as', draft, 'mode', [['itemized', 'Item expenses'], ['total', 'One expense']], () => {});
+  help(details, draft.mode === 'itemized' ? 'Creates expenses from the items, charges and discounts.' : 'Records Total as one expense.');
+  select(details, 'Total source', draft, 'totalBasis', [['printed_total', 'Bill total'], ...(draft.tipDecision === 'bill_only' ? [] : [['final_paid', 'Amount paid']]), ['user_entered', 'Entered total']]);
+  details.append(basisExplanation);
+  reference(details, 'Bill total', 'printedTotal', 'printed_total', 'Printed on the receipt.');
+  if (draft.tipDecision === 'bill_only') help(details, 'Amount paid: unknown.');
+  else reference(details, 'Amount paid', 'finalPaid', 'final_paid', 'Final amount you paid.');
+  if (draft.mode === 'total') text(details, 'Expense title', draft, 'totalTitle', { change: () => { draft.totalTitleEdited = true; } });
+  parent.append(warnings, results); update();
+  return async () => { if (editor.continuing || receiptBatchBlocked(editor) || !editor.reviewEditing) return; submitted = true; update(); const unresolved = controls.find(([, object, key]) => invalid(object, key));
+    if (unresolved) { const input = unresolved[0]; for (let ancestor = input.parentElement; ancestor && ancestor !== parent; ancestor = ancestor.parentElement) if (ancestor.tagName === 'DETAILS') ancestor.open = true; input.focus(); input.scrollIntoView({ block: 'nearest' }); return; }
+    if (required.some(issue => !draft.acknowledged.has(RM.warningToken(issue)))) { warnings.open = true; results.replaceChildren(node('p', 'Check the details below before continuing.', 'error')); warningBody.querySelector('input')?.focus(); return; }
+    editor.continuing = true; try { await useReview(); } catch (error) { results.replaceChildren(node('p', errorMessage(error), 'error')); results.tabIndex = -1; results.focus(); results.scrollIntoView({ block: 'nearest' }); } finally { editor.continuing = false; }
+  };
+}
+
 function openEditor(kind, item = null, preset = null) {
   if (state.editor || !state.adminUsername) return;
   if (kind === 'authentication' && item?.environmentManaged) return;
@@ -1287,20 +1984,25 @@ function openEditor(kind, item = null, preset = null) {
   if (item && ['expense', 'income', 'transfer'].includes(kind)) kind = recordKind(item);
   const draft = ['expense', 'income'].includes(kind) ? splitRecordDraft(item, kind)
     : kind === 'transfer' ? { ...moneyDraft(item), note: item?.note ?? '', amount: item ? major(item.amountMinor, item.currency) : '', byUserId: item?.paidBy.userId || group.members[0]?.userId || '', toUserId: item?.transferTo.userId || group.members[1]?.userId || '', date: item?.date || today(), historicalUsers: item ? [item.paidBy, item.transferTo] : [], ...preset }
-    : kind === 'receipt' ? { note: item?.note ?? '', uploadedByUserId: item?.uploadedBy.userId || group.members[0]?.userId || '', records: item ? item.records.map(record => splitRecordDraft(record, 'expense')) : [] }
+    : kind === 'receipt' ? { title: item?.title ?? '', note: item?.note ?? '', uploadedByUserId: item?.uploadedBy.userId || group.members[0]?.userId || '', records: item ? item.records.map(record => splitRecordDraft(record, 'expense')) : [], source: undefined }
     : kind === 'rename' ? { name: group.groupName, currencyMode: group.currencyMode, currency: group.defaultCurrency }
     : kind === 'owner' || kind === 'member' ? { userId: '' }
     : kind === 'csv' ? { ...moneyDraft(), csv: '' }
     : kind === 'group' ? { name: '', userId: '', currencyMode: 'single', currency: currencyCatalog?.find(c => c.code === 'USD') || { code: 'USD', name: 'Default currency' } }
     : kind === 'authentication' ? { revision: item.revision, localRegistrationEnabled: item.localRegistrationEnabled, ssoRegistrationEnabled: item.ssoRegistrationEnabled, oidcEnabled: item.oidcEnabled, providerName: item.providerName, issuer: item.issuer ?? '', clientId: item.clientId ?? '', clientSecret: '' }
+    : kind === 'receipt-ai-settings' ? { revision: item.revision, enabled: item.enabled, apiKey: '', keyAction: 'keep' }
     : kind === 'user-profile' ? { username: item.profile.user.username, displayName: item.profile.user.displayName, email: item.profile.email, enabled: item.enabled }
     : { username: '', displayName: '', email: '', password: '', createMode: 'local' };
   state.editor = { kind, id: item?.recordId || item?.receiptId || (kind === 'user-profile' ? item.profile.user.userId : null), original: item, groupId: group?.groupId || null, draft, dirty: false, pending: false, error: '', focus: focusReference() };
   $('#editor-title').textContent = ({ authentication: 'Edit authentication', 'user-profile': 'Edit user profile', member: 'Add member', owner: 'Transfer ownership', rename: 'Group settings', csv: 'Import CSV' })[kind] || `${item ? 'Edit' : 'Create'} ${kind}`;
-  $('#editor-error').textContent = ''; $('#editor-save').disabled = false; $('#editor-save').textContent = kind === 'csv' ? 'Import' : kind === 'rename' ? 'Save settings' : 'Save';
+  $('#editor-error').textContent = ''; $('#editor-save').disabled = false; $('#editor-save').textContent = kind === 'csv' ? 'Import' : ['rename', 'receipt-ai-settings'].includes(kind) ? 'Save settings' : kind === 'receipt' ? 'Save receipt' : 'Save';
+  $('#editor-save').hidden = false; $('#editor-save').formNoValidate = false;
   $('#editor-cancel').disabled = false; $('#editor-close').disabled = false;
   const body = $('#editor-body'); body.replaceChildren();
-  if (kind === 'authentication') renderAuthenticationEditor(body, draft, item);
+  if (item?.receipt && ['expense', 'income', 'transfer'].includes(kind)) body.append(receiptAssociation(group.groupId, item.receipt));
+  $('#editor-dialog').classList.toggle('receipt-editor', kind === 'receipt');
+  if (kind === 'receipt-ai-settings') renderReceiptAISettingsEditor(body, draft, item);
+  else if (kind === 'authentication') renderAuthenticationEditor(body, draft, item);
   else if (kind === 'user-profile') {
     inputField(body, 'Username', draft, 'username', { required: true, maxLength: 50 });
     inputField(body, 'Display name', draft, 'displayName', { required: true, maxLength: 100 });
@@ -1329,32 +2031,59 @@ function openEditor(kind, item = null, preset = null) {
     memberPicker(grid, 'Paid to', draft, 'toUserId', () => state.group.members, editor.roleRender);
     editor.roleRender();
   } else if (kind === 'receipt') {
-    if (item) body.append(node('p', 'Saving replaces all child expenses with new records. The uploader cannot be changed.', 'muted'), node('p', `Uploader: ${userLabel(item.uploadedBy)}`));
-    inputField(body, 'Receipt note (optional)', draft, 'note', { multiline: true }).dataset.receiptNote = '';
+    if (item) body.append(node('p', 'Saving replaces all child expenses with new records; old expense links will no longer open.', 'muted'), node('p', `Uploader: ${userLabel(item.uploadedBy)}`));
     if (!item) memberPicker(body, 'Uploader', draft, 'uploadedByUserId', group.members);
-    const items = node('div', null, 'stack'); body.append(items);
+    const title = inputField(body, 'Receipt title', draft, 'title', { changed: () => { state.editor.titleEdited = true; } }); title.dataset.receiptTitle = '';
+    state.editor.titleEdited = false; state.editor.lastTitleSuggestionExtractionId = null;
+    const note = inputField(body, 'Receipt note (optional)', draft, 'note', { multiline: true }); note.dataset.receiptNote = ''; note.rows = 2;
+    const editor = state.editor; editor.receiptSelection = new Set();
+    renderReceiptImport(body, editor);
+    const selectionActions = node('div', null, 'row-actions'); const selectionCount = node('p', '', 'muted'); selectionCount.setAttribute('role', 'status');
+    const selectAll = node('input'); selectAll.type = 'checkbox'; selectAll.onchange = () => { if (receiptBatchBlocked(editor) || editor.reviewEditing) return; editor.receiptSelection.clear(); if (selectAll.checked) for (const record of draft.records) editor.receiptSelection.add(record); editor.receiptSelectionRender(); };
+    const multiple = button('Edit multiple', () => { if (receiptBatchBlocked(editor) || editor.reviewEditing) return; editor.selectionMode = true; editor.receiptSelectionRender(); });
+    const done = button('Done', () => { if (receiptBatchBlocked(editor)) return; editor.receiptSelection.clear(); editor.selectionMode = false; editor.receiptSelectionRender(); });
+    const batch = button('Edit selected', () => { if (!editor.reviewEditing) openReceiptBatch(editor); }); selectionActions.append(labeled('Select all', selectAll), batch, done);
+    const items = node('div', null, 'stack'); body.append(multiple, selectionCount, selectionActions, items);
     const cards = new Map();
+    editor.receiptSelectionRender = () => {
+      for (const record of editor.receiptSelection) if (!draft.records.includes(record)) editor.receiptSelection.delete(record);
+      const blocked = receiptBatchBlocked(editor) || editor.reviewEditing;
+      items.hidden = Boolean(editor.reviewEditing); multiple.hidden = Boolean(editor.reviewEditing || editor.selectionMode); multiple.disabled = blocked || !draft.records.length;
+      selectionActions.hidden = selectionCount.hidden = !editor.selectionMode || Boolean(editor.reviewEditing);
+      selectionCount.textContent = `${editor.receiptSelection.size} selected`;
+      selectAll.checked = Boolean(draft.records.length && editor.receiptSelection.size === draft.records.length); selectAll.disabled = blocked || !draft.records.length; done.disabled = blocked; batch.disabled = blocked || !editor.receiptSelection.size;
+      if (editor.addReceiptExpense) editor.addReceiptExpense.hidden = Boolean(editor.reviewEditing);
+      for (const [record, card] of cards) { card.selectLabel.hidden = !editor.selectionMode; card.select.checked = editor.receiptSelection.has(record); card.select.disabled = blocked; card.selectLabel.firstChild.textContent = `Select expense ${draft.records.indexOf(record) + 1}`; }
+    };
     function renderItems() {
       items.querySelector('.empty-state')?.remove();
+      for (const [record, card] of cards) if (!draft.records.includes(record)) { retireDraft(record); disposePickersWithin(card.details); card.selectLabel.remove(); card.details.remove(); cards.delete(record); editor.receiptSelection.delete(record); }
       draft.records.forEach((record, index) => {
         let card = cards.get(record);
+        if (card && card.importLocked !== Boolean(record.importLocked)) { disposePickersWithin(card.details); card.selectLabel.remove(); card.details.remove(); cards.delete(record); card = null; }
         if (!card) {
-          const details = node('details', null, 'card stack'); details.open = true; const summary = node('summary'); details.append(summary);
+          const details = node('details', null, 'card stack'); details.open = Boolean(record.openInitially); const summary = node('summary'); details.append(summary);
+          const select = node('input'); select.type = 'checkbox'; const selectLabel = labeled('', select); items.append(selectLabel);
+          select.onchange = () => { if (receiptBatchBlocked(editor) || editor.reviewEditing) { select.checked = editor.receiptSelection.has(record); return; } if (select.checked) editor.receiptSelection.add(record); else editor.receiptSelection.delete(record); editor.receiptSelectionRender(); };
           renderSplitRecordFields(details, record, 'expense');
-          details.append(button('Remove expense', () => { if (state.editor?.pending || !draft.records.includes(record)) return; retireDraft(record); draft.records.splice(draft.records.indexOf(record), 1); disposePickersWithin(details); details.remove(); cards.delete(record); markDirty(); renderItems(); }, 'danger'));
-          card = { details, summary }; cards.set(record, card); items.append(details);
+          details.append(button('Remove expense', () => { if (receiptBatchBlocked(editor) || !draft.records.includes(record)) return; if (draft.source?.review) { editor.returnToReceiptReview(); return; } draft.records.splice(draft.records.indexOf(record), 1); markDirty(); renderItems(); }, 'danger'));
+          card = { details, summary, select, selectLabel, importLocked: Boolean(record.importLocked) }; cards.set(record, card); items.append(details);
+          record.focusReceiptError = () => { details.open = true; const target = details.querySelector(':invalid, [aria-invalid="true"]') || details.querySelector('.error') || details.querySelector('input, select'); if (target) { if (!target.matches('input,select,textarea,button')) target.tabIndex = -1; target.focus(); target.scrollIntoView({ block: 'nearest' }); } };
         }
         record.summaryRender = () => {
           let description = `${record.currency.code} ${record.amount || '—'}`;
           try { const amount = draftAmount(record); description = money(amount, record.currency); const rate = rateValue(record); if (rate) description += ` · ${money(M.convertMinorAmount(amount, { sourceMinorDigits: record.currency.minorUnits, targetMinorDigits: state.group.defaultCurrency.minorUnits, rate }), state.group.defaultCurrency)} settlement`; } catch (_) { /* Invalid draft text stays visible for correction. */ }
           const payer = [...record.historicalUsers, ...state.group.members].findLast(user => user.userId === record.byUserId);
-          card.summary.textContent = `Expense ${draft.records.indexOf(record) + 1} · ${record.title || 'Untitled'} · ${description} · ${payer ? userLabel(payer) : 'Choose payer'}`;
+          const people = [...record.historicalUsers, ...state.group.members]; const participants = [...record.selected].map(id => people.findLast(user => user.userId === id)).map(user => user ? userLabel(user) : 'Former member');
+          card.summary.textContent = `${record.title || 'Untitled'} · ${description} · ${payer ? userLabel(payer) : 'Choose payer'} · ${{ equal: 'Equal', shares: 'Shares', percentage: 'Percentages', exact: 'Exact amounts' }[record.mode]}: ${participants.join(', ')}`;
         }; record.summaryRender();
       });
       if (!draft.records.length) items.append(node('p', 'No expenses in this batch.', 'empty-state'));
+      editor.receiptSelectionRender();
     }
-    renderItems();
-    body.append(button('Add expense', () => { draft.records.push(splitRecordDraft(null, 'expense')); markDirty(); renderItems(); }));
+    editor.renderReceiptItems = renderItems; renderItems();
+    editor.addReceiptExpense = button('Add expense', () => { if (receiptBatchBlocked(editor) || editor.reviewEditing) return; if (draft.source?.review) { editor.returnToReceiptReview(); return; } const record = splitRecordDraft(null, 'expense'); record.openInitially = true; draft.records.push(record); markDirty(); renderItems(); }); body.append(editor.addReceiptExpense);
+    editor.receiptBatchApplied = (_records, changes) => { if (changes.payerUserId !== undefined || changes.mode !== undefined) editor.resetReceiptRoles?.(); };
   } else if (kind === 'csv') {
     body.append(node('p', 'Choose a UTF-8 CSV file or paste its contents below. Use decimal amounts. Quote comma-separated split lists; repeated names count as shares.', 'muted'), node('pre', 'title,amount,paidBy,split,date\nDinner,90,alice,"alice,bob,bob",2026-10-14', 'mono'));
     renderCurrencyFields(body, draft, () => {}, { batch: true });
@@ -1389,11 +2118,12 @@ function openEditor(kind, item = null, preset = null) {
     } else inputField(body, 'Password', draft, 'password', { type: 'password', minLength: 6, required: true, autocomplete: 'new-password' });
   }
   $('#editor-dialog').showModal();
-  const first = body.querySelector('input,select,textarea,button'); if (first) first.focus();
+  const first = [...body.querySelectorAll('input,select,textarea,button,summary')].find(control => control.getClientRects().length); if (first) first.focus();
 }
 async function saveEditor(event) {
   event.preventDefault(); const editor = state.editor;
   if (!editor || editor.pending) return;
+  if (editor.kind === 'receipt' && editor.reviewEditing) { await editor.submitReceiptReview?.(); return; }
   const { kind, draft, id, groupId } = editor; const base = groupId ? groupApi(groupId) : '';
   let url, method = id ? 'PUT' : 'POST', payload, csv = false;
   $('#editor-error').textContent = ''; editor.error = '';
@@ -1407,7 +2137,13 @@ async function saveEditor(event) {
       if (state.group.currencyMode === 'single' && draft.currency.code !== state.group.defaultCurrency.code) throw new Error('Payments must use the group default currency');
       payload = { amountMinor: amount.toString(), currency: draft.currency.code, byUserId: draft.byUserId, toUserId: draft.toUserId, date: draft.date, note: recordNoteInput(draft.note) }; url = `${base}/records/transfer${id ? `/${encodeURIComponent(id)}` : ''}`;
     } else if (kind === 'receipt') {
-      payload = { note: draft.note, records: draft.records.map(record => validateSplitRecord(record, 'expense')) };
+      if (!validateReceiptTitle(editor)) return;
+      if (editor.extracting || editor.loadingSource) throw new Error('Wait for receipt reading to finish.');
+      if (editor.image && !editor.reviewEditing && draft.source?.image !== editor.image) throw new Error('Read the photo or choose Enter manually before saving.');
+      if (draft.source?.review && !editor.rolesConfirmed) throw new Error('Confirm the displayed payers and splits before saving this import.');
+      if (draft.source?.review) validateReviewedReceiptRecords(editor);
+      payload = { title: draft.title, note: draft.note, records: draft.records.map(record => { try { return validateSplitRecord(record, 'expense'); } catch (error) { record.focusReceiptError?.(); throw error; } }) };
+      if (draft.source !== undefined) payload.source = draft.source;
       if (!id) {
         if (!state.group.members.some((member) => member.userId === draft.uploadedByUserId)) throw new Error('Choose an active member as uploader.');
         payload.uploadedByUserId = draft.uploadedByUserId;
@@ -1427,6 +2163,12 @@ async function saveEditor(event) {
       if (!confirmed || state.editor !== editor) return;
       url = `${base}/owner`; method = 'PUT'; payload = draft.userId;
     } else if (kind === 'group') { url = '/admin/groups'; payload = { createGroupName: draft.name, ownerUserId: draft.userId, currencyMode: draft.currencyMode, defaultCurrency: draft.currency.code }; }
+    else if (kind === 'receipt-ai-settings') {
+      const apiKey = draft.apiKey;
+      const keyAction = draft.apiKey.trim() ? 'replace' : draft.keyAction;
+      payload = { revision: draft.revision, enabled: draft.enabled, keyAction, apiKey: keyAction === 'replace' ? apiKey : null };
+      url = '/admin/receipt-ai/settings'; method = 'PUT';
+    }
     else if (kind === 'authentication') {
       payload = authenticationPayload(draft); url = '/admin/authentication'; method = 'PUT';
       if (editor.original.oidcEnabled && !draft.oidcEnabled && !await confirmAction('Disable SSO?', `${editor.original.ssoOnlyUserCount} enabled users have only SSO. SSO sessions and pending SSO flows/invitations will be revoked. Password sign-in remains available.`, null, 'Disable SSO')) return;
@@ -1457,19 +2199,24 @@ async function saveEditor(event) {
     // Lists are reloaded from the server; there is no stale record/receipt/report cache.
     await loadPage(); restoreFocus(reference);
   } catch (error) {
-    if (state.editor === editor && !error.stale) { editor.error = errorMessage(error); $('#editor-error').textContent = editor.error; }
-    if (error.status === 409 && state.editor === editor && editor.groupId && !['authentication', 'user-profile'].includes(kind)) await refreshEditorPolicy(editor);
+    if (state.editor === editor && !error.stale) {
+      editor.error = errorMessage(error); $('#editor-error').textContent = editor.error;
+      if (kind === 'receipt' && /note/i.test(editor.error)) { const note = $('#editor-body').querySelector('[data-receipt-note]'); if (note) { note.focus(); note.scrollIntoView({ block: 'nearest' }); } }
+    }
+    if (error.status === 409 && state.editor === editor && editor.groupId && !['authentication', 'user-profile', 'receipt-ai-settings'].includes(kind)) await refreshEditorPolicy(editor);
   } finally { if (state.editor === editor) { editor.pending = false; setEditorPending(false); } }
 }
 function setEditorPending(pending) {
   $('#editor-save').disabled = pending; $('#editor-cancel').disabled = pending; $('#editor-close').disabled = pending;
-  $('#editor-save').textContent = pending ? 'Saving…' : state.editor?.kind === 'csv' ? 'Import' : state.editor?.kind === 'rename' ? 'Save settings' : 'Save';
+  $('#editor-save').textContent = pending ? 'Saving…' : state.editor?.kind === 'csv' ? 'Import' : ['rename', 'receipt-ai-settings'].includes(state.editor?.kind) ? 'Save settings' : state.editor?.kind === 'receipt' ? 'Save receipt' : 'Save';
   $('#editor-body').querySelectorAll('button,input,select,textarea').forEach((control) => {
     if (pending) { if (control.dataset.wasDisabled === undefined) control.dataset.wasDisabled = String(control.disabled); control.disabled = true; }
     else if (control.dataset.wasDisabled !== undefined) { control.disabled = control.dataset.wasDisabled === 'true'; delete control.dataset.wasDisabled; }
   });
   if (!pending && state.editor) for (const draft of state.editor.kind === 'receipt' ? state.editor.draft.records : [state.editor.draft]) draft.rateRender?.();
   state.editor?.roleRender?.();
+  state.editor?.receiptSelectionRender?.();
+  state.editor?.receiptImportRender?.();
 }
 async function login(event) {
   event.preventDefault(); if (state.loginPending) return;

@@ -124,6 +124,12 @@ text. A unit test or successful build is not visual proof. Report only observed
 verification and blockers; do not claim native-platform coverage from a web run.
 Do not reset persistent local data to make verification pass.
 
+After every test or smoke run, including failures and cancellations, stop and
+reap all processes started for that run: application servers, disposable
+PostgreSQL clusters, browser instances, proxies, and workers. Track ownership
+and arrange cleanup before launching them. Never stop pre-existing services or
+delete persistent data as part of cleanup.
+
 ## Lint / Formatting
 No dedicated formatter or linter config is checked in.
 Not found: `.hlint.yaml`, `fourmolu.yaml`, `ormolu.yaml`, `.stylish-haskell.yaml`, `.editorconfig`.

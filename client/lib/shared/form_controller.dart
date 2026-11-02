@@ -12,6 +12,7 @@ class FormController extends ChangeNotifier {
   bool dirty = false;
   bool pending = false;
   String? error;
+  String discardMessage = 'Your unsaved changes will be lost.';
   int _sessionGeneration;
   int _generation = 0;
   bool _disposed = false;
@@ -71,6 +72,7 @@ class FormController extends ChangeNotifier {
     dirty = false;
     pending = false;
     error = null;
+    discardMessage = 'Your unsaved changes will be lost.';
     notifyListeners();
   }
 

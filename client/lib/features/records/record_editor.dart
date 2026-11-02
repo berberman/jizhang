@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/api_client.dart';
 import '../../core/exchange_rate_controller.dart';
@@ -69,6 +70,36 @@ class SplitFieldsController extends ChangeNotifier {
   final Set<SplitMode> _visited = {};
   final Map<SplitMode, Map<String, TextEditingController>> _inputs = {};
   final Map<String, User> knownUsers = {};
+  bool _applyingReceiptBatch = false;
+  @override
+  void notifyListeners() {
+    if (!_applyingReceiptBatch) super.notifyListeners();
+  }
+  // Receipt-wide preflight must finish before changing any selected controller.
+  void applyReceiptBatchChanges({String? payerUserId, String? accountingDate,
+    SplitMode? mode, List<SplitDraft>? splits}) {
+    assert((mode == null) == (splits == null));
+    _applyingReceiptBatch = true;
+    try {
+      if (payerUserId != null) actorUserId = payerUserId;
+      if (accountingDate != null) date.text = accountingDate;
+      if (mode != null && splits != null) {
+        selected..clear()..addAll(splits.map((row) => row.userId));
+        splitMode = mode;
+        _visited.add(mode);
+        if (mode != SplitMode.equal) {
+          for (final row in splits) {
+            _input(mode, row.userId).text = switch (mode) {
+              SplitMode.percentage => formatMajorAmount(row.value, minorDigits: 2),
+              SplitMode.exact => currency.formatMajor(row.value),
+              _ => row.value.toString(),
+            };
+          }
+        }
+      }
+    } finally { _applyingReceiptBatch = false; }
+    notifyListeners();
+  }
   TextEditingController _input(SplitMode mode, String id, [String? initial]) =>
     (_inputs[mode] ??= {}).putIfAbsent(id, () {
       final c = TextEditingController(text: initial ?? (mode == SplitMode.shares ? '1' : '0'));
@@ -182,11 +213,14 @@ class _FormFieldPair extends StatelessWidget {
 }
 
 class SplitFields extends StatefulWidget {
-  const SplitFields({super.key, required this.session, required this.controller, required this.onChanged, this.enabled = true});
+  const SplitFields({super.key, required this.session, required this.controller, required this.onChanged, this.enabled = true,
+    this.moneyLocked = false, this.onReviewMoney});
   final SessionController session;
   final SplitFieldsController controller;
   final VoidCallback onChanged;
   final bool enabled;
+  final bool moneyLocked;
+  final VoidCallback? onReviewMoney;
   @override
   State<SplitFields> createState() => _SplitFieldsState();
 }
@@ -227,7 +261,9 @@ class _SplitFieldsState extends State<SplitFields> {
         keyboardType: TextInputType.multiline, decoration: const InputDecoration(labelText: 'Note (optional)'), onChanged: (_) => widget.onChanged()),
       const SizedBox(height: 12),
       CurrencyAmountFields(repository: c.repository, session: widget.session, currency: c.currency,
-        amountController: c.amount, enabled: widget.enabled, onCurrencyChanged: c.setCurrency, onChanged: widget.onChanged),
+        amountController: c.amount, enabled: widget.enabled && !widget.moneyLocked, onCurrencyChanged: c.setCurrency, onChanged: widget.onChanged),
+      if (widget.moneyLocked) Align(alignment: Alignment.centerLeft, child: TextButton(
+        onPressed: widget.enabled ? widget.onReviewMoney : null, child: const Text('Edit amounts'))),
       if (c.currencyReview != null) Text(c.currencyReview!),
       ExchangeRateFields(controller: c.exchangeRate, enabled: widget.enabled, onChanged: widget.onChanged),
       if (converted.isNotEmpty) Text('Settlement total: ${c.group.defaultCurrency.format(c.settlementMinor)}'),
@@ -245,6 +281,7 @@ class _SplitFieldsState extends State<SplitFields> {
               onSelectionChanged: widget.enabled ? (m) => _action(() => c.setSplitMode(m.single)) : null),
           ])
         : DropdownButtonFormField<SplitMode>(key: ValueKey(c.splitMode), initialValue: c.splitMode,
+            isExpanded: true, itemHeight: null,
             decoration: const InputDecoration(labelText: 'Split method'), items: [for (final mode in SplitMode.values) DropdownMenuItem(value: mode, child: Text(labels[mode]!))],
             onChanged: widget.enabled ? (m) { if (m != null) _action(() => c.setSplitMode(m)); } : null)),
       const SizedBox(height: 8),
@@ -376,6 +413,32 @@ class _RecordEditorFieldsState extends State<_RecordEditorFields> {
   @override
   void dispose() { _split?.dispose(); _amount.dispose(); _date.dispose(); _note.dispose(); super.dispose(); }
   void _changed() { _validation = null; widget.form.markDirty(); }
+  Future<void> _openReceipt(ReceiptSummary receipt) async {
+    if (widget.form.pending) return;
+    final generation = widget.session.generation;
+    final groupId = widget.group.groupId;
+    final recordId = widget.record?.recordId;
+    final form = widget.form;
+    final origin = GoRouter.of(context).routerDelegate.currentConfiguration;
+    if (!await FormNavigation.canExit(context) || !mounted || form.pending ||
+        !identical(form, widget.form) || generation != widget.session.generation ||
+        !widget.session.isAuthenticated || groupId != widget.group.groupId ||
+        recordId != widget.record?.recordId || widget.record?.receipt?.receiptId != receipt.receiptId ||
+        !identical(origin, GoRouter.of(context).routerDelegate.currentConfiguration) ||
+        ModalRoute.of(context)?.isCurrent != true) return;
+    context.go('/groups/$groupId/receipts/${receipt.receiptId}');
+  }
+  Future<void> _return(String fallback) async {
+    if (widget.form.pending) return;
+    final generation = widget.session.generation;
+    final groupId = widget.group.groupId;
+    final recordId = widget.record?.recordId;
+    final form = widget.form;
+    await returnFromRecord(context, widget.session, fallback: fallback,
+      canReturn: () => mounted && !form.pending && identical(form, widget.form) &&
+        generation == widget.session.generation && groupId == widget.group.groupId &&
+        recordId == widget.record?.recordId);
+  }
   Future<void> _save() async {
     if (widget.form.pending) return;
     final generation = widget.session.generation;
@@ -411,8 +474,7 @@ class _RecordEditorFieldsState extends State<_RecordEditorFields> {
     if (!mounted || !success || generation != widget.session.generation) return;
     GroupScope.of(context).recordChanges.markChanged();
     widget.form.reset(); showSuccess(context, 'Record saved');
-    await returnFromRecord(context, widget.session,
-      fallback: '/groups/${widget.group.groupId}/records/${saved!.recordId}');
+    await _return('/groups/${widget.group.groupId}/records/${saved!.recordId}');
   }
   @override
   Widget build(BuildContext context) => ListenableBuilder(listenable: widget.form, builder: (context, _) {
@@ -421,6 +483,9 @@ class _RecordEditorFieldsState extends State<_RecordEditorFields> {
     final equalEndpoints = _transfer && _actorUserId.isNotEmpty && _recipientId.isNotEmpty && _actorUserId == _recipientId;
     final inactiveEndpoint = _transfer && (!names.contains(_actorUserId) || !names.contains(_recipientId));
     return FormSurface(title: '${widget.record == null ? 'New' : 'Edit'} ${switch (_kind) { RecordKind.expense => 'expense', RecordKind.income => 'income', RecordKind.transfer => 'payment' }}', child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      if (widget.record?.receipt case final receipt?) Align(alignment: Alignment.centerLeft,
+        child: ReceiptAssociationLink(receipt: receipt,
+          onPressed: widget.form.pending ? null : () => _openReceipt(receipt))),
       AbsorbPointer(absorbing: widget.form.pending, child: _transfer ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         CurrencyAmountFields(repository: widget.repository, session: widget.session, currency: _currency, amountController: _amount,
           locked: widget.group.currencyMode == CurrencyMode.single, enabled: !widget.form.pending,
@@ -445,8 +510,8 @@ class _RecordEditorFieldsState extends State<_RecordEditorFields> {
       const SizedBox(height: 12),
       if (_validation ?? widget.form.error case final String error) Text(error, style: const TextStyle(color: Color(0xFFB42318))),
       Wrap(spacing: 12, runSpacing: 8, children: [FilledButton(onPressed: widget.form.pending || insufficientMembers || equalEndpoints || inactiveEndpoint ? null : _save, child: Text(widget.form.pending ? 'Saving…' : 'Save')),
-        TextButton(onPressed: widget.form.pending ? null : () => returnFromRecord(context, widget.session,
-          fallback: '/groups/${widget.group.groupId}/records'), child: const Text('Cancel'))]),
+        TextButton(onPressed: widget.form.pending ? null : () => _return(
+          '/groups/${widget.group.groupId}/records'), child: const Text('Cancel'))]),
     ]));
   });
 }

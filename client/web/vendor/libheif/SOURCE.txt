@@ -1,0 +1,127 @@
+HEIF decoder: libheif-js 1.23.5
+
+Jizhang distributes the unmodified self-contained browser bundle from
+package/libheif-wasm/libheif-bundle.js in the exact npm archive below.
+The SHA-512 integrity value was verified before extracting this member.
+No decoder CDN or remote decoder service is required at runtime.
+
+Published npm archive:
+https://registry.npmjs.org/libheif-js/-/libheif-js-1.23.5.tgz
+SHA-256: d0bfe7198bd624c524cef8ccf78e15ceb42683c87598c64c2e13ced0d8680932
+SRI: sha512-umXZPthnWZtF3iG/5mQG+AZ2V6i0UeYpo3z2CkggTEgL8dKmIIwJT6TDuAMuabXa1yTW8uJ1ZAgR+CxNTklYYw==
+Bundle SHA-256: 074b2b55ef3de477ba9f794ca381f3f0324c1cba8c91b4af07395f39c22d54cc
+Bundle length: 2044206 bytes
+
+Local corresponding source
+==========================
+The adjacent corresponding-source.tar.gz contains actual complete upstream
+source trees, not only download links. It includes the npm package manifest,
+entry points and license; upstream build, bundling and CI scripts; libheif's
+post.js wrapper; libde265's generated configure/build files; the complete
+Emscripten 3.1.61 runtime and system libraries; and the emsdk 3.1.61 installer.
+All upstream sources and their per-file notices are retained unmodified.
+UPSTREAM-ARCHIVES.json inside the archive records measured archive hashes.
+
+corresponding-source.tar.gz SHA-256:
+b52e581af3d49295d82fd75967bb8864064b13eee95c633317c4d983b9bfe42c
+
+Archive directories under corresponding-source/:
+  libheif-js-d8ec4bc3bc5bf8055975577bccbbc7e1d7313c2d/
+  libheif-emscripten-5c8968a44e9c68ae677e24790d77d001ed7fe7cc/
+  libheif-413e2a87e6a70b3eccc3a3adc5801179dd2d9e00/
+  libde265-1.0.15/
+  emscripten-3.1.61/
+  emsdk-3.1.61/
+  npm-libheif-js-1.23.5/
+
+Exact source archives and measured SHA-256 hashes
+================================================
+libheif-js commit d8ec4bc3bc5bf8055975577bccbbc7e1d7313c2d:
+https://codeload.github.com/catdad-experiments/libheif-js/tar.gz/d8ec4bc3bc5bf8055975577bccbbc7e1d7313c2d
+db9c0c25b15c5c351ac5b045b01009cc446f5712091300656902f9e40a2934db
+
+libheif-emscripten commit 5c8968a44e9c68ae677e24790d77d001ed7fe7cc:
+https://codeload.github.com/catdad-experiments/libheif-emscripten/tar.gz/5c8968a44e9c68ae677e24790d77d001ed7fe7cc
+5e524ec5746bb0676c5865c9ce76d40cee871def4a9d437d0a96595830cd235a
+
+libheif commit 413e2a87e6a70b3eccc3a3adc5801179dd2d9e00:
+https://codeload.github.com/strukturag/libheif/tar.gz/413e2a87e6a70b3eccc3a3adc5801179dd2d9e00
+ef8e86a4e5670b7338a58b17553e306b8be88e506587b265dfdfe44495896999
+
+libde265 1.0.15 release archive consumed by build-emscripten.sh:
+https://github.com/strukturag/libde265/releases/download/v1.0.15/libde265-1.0.15.tar.gz
+00251986c29d34d3af7117ed05874950c875dd9292d016be29d3b3762666511d
+
+Emscripten 3.1.61:
+https://codeload.github.com/emscripten-core/emscripten/tar.gz/refs/tags/3.1.61
+bc5eff3d929a208173a61de47f0084e687d06df442c03684a796538d51e4a38b
+
+emsdk 3.1.61:
+https://codeload.github.com/emscripten-core/emsdk/tar.gz/refs/tags/3.1.61
+51a4f6ec070147abe8f94546d8e18dde458d63f8c2927f94265ad49ef8431a1c
+
+Build and bundle instructions
+=============================
+These commands describe the upstream build from the included sources. They
+were source-inspected, not executed as part of this vendoring operation.
+Use an isolated Linux build directory with Node.js 24, npm, Python 3, CMake,
+Make, autoconf, automake, libtool and a C/C++ toolchain. The SDK installation
+fetches the standard unmodified Emscripten compiler toolchain; it is not a
+runtime decoder dependency. The included Emscripten source tree supplies the
+runtime sources and notices matching that SDK version.
+
+  tar -xzf corresponding-source.tar.gz
+  cd corresponding-source
+  ./emsdk-3.1.61/emsdk install 3.1.61
+  ./emsdk-3.1.61/emsdk activate 3.1.61
+  . ./emsdk-3.1.61/emsdk_env.sh
+  npm install -g typescript@5
+  mkdir build-wasm
+  cd build-wasm
+  tar -czf libde265-1.0.15.tar.gz -C .. libde265-1.0.15
+  ENABLE_LIBDE265=1 LIBDE265_VERSION=1.0.15 ENABLE_AOM=0 \
+    ENABLE_WEBCODECS=0 ENABLE_UNCOMPRESSED=0 ENABLE_OPENJPEG=0 \
+    USE_WASM=1 USE_TYPESCRIPT=1 USE_UNSAFE_EVAL=0 \
+    ../libheif-413e2a87e6a70b3eccc3a3adc5801179dd2d9e00/build-emscripten.sh \
+    ../libheif-413e2a87e6a70b3eccc3a3adc5801179dd2d9e00
+  cd ..
+  mkdir -p decoder-dist/libheif-wasm
+  cp build-wasm/libheif.js build-wasm/libheif.wasm \
+    build-wasm/libheif.d.ts decoder-dist/libheif-wasm/
+  cp libheif-413e2a87e6a70b3eccc3a3adc5801179dd2d9e00/COPYING \
+    decoder-dist/libheif-wasm/LICENSE
+  tar -czf decoder-dist.tar.gz -C decoder-dist libheif-wasm
+  cd libheif-js-d8ec4bc3bc5bf8055975577bccbbc7e1d7313c2d
+  npm install --ignore-scripts
+  node scripts/install.js ../decoder-dist.tar.gz
+
+The output is libheif-wasm/libheif-bundle.js. scripts/install.js uses the
+package's esbuild ^0.19.5 and esbuild-plugins-node-modules-polyfill ^1.6.7
+build dependencies, targeting ES2019 and embedding WASM as binary. Upstream
+does not include a dependency lockfile, so a new build is not claimed to be
+byte-for-byte reproducible. The shipped bundle is the verified npm member,
+not an unverified local rebuild. The original full release workflow is in
+libheif-emscripten-*/.github/workflows/emscripten.yml and dist-prep.sh.
+
+Replacing or modifying the decoder
+=================================
+The decoder is a separate replaceable file. Build an interface-compatible
+bundle with the commands above, replace libheif-bundle.js beside this file,
+and serve the application again. No signing key or application-code change
+is required to replace this decoder. Its classic-script global is a callable
+libheif factory; await libheif() returns the module exposing HeifDecoder.
+The application wrappers remain separate from this vendor file. Application
+source is distributed separately with Jizhang under its MIT license.
+
+Licensing and attribution
+=========================
+LICENSES.txt reproduces the npm LGPL notice, libheif's combined LGPL-3.0 and
+GPL-3.0 text and MIT examples notice, libde265's LGPL/GPL and utility notices,
+and Emscripten/emsdk and applicable runtime notices verbatim. Runtime notices
+include musl, compiler-rt, libc++, libc++abi, libunwind and mimalloc; the full
+Emscripten source tree retains all other per-file/component notices, including
+optional components not selected by this decoder build. LGPL permits library
+modification and reverse engineering to debug those modifications subject to
+its terms; this application imposes no additional restriction on that use.
+Read the supplied license texts for the applicable terms and warranty
+exclusions. No warranty is provided for this decoder.

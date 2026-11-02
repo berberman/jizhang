@@ -20,6 +20,14 @@ import OIDCFlowTest (oidcFlowTests)
 import OIDCProvider (runOidcProvider)
 import OIDCTest (oidcTests)
 import RecordQueryTest (recordQueryTests)
+import ReceiptImportTest (receiptImportTests)
+import ReceiptImageTest (receiptImageTests)
+import ReceiptSourceDatabaseTest (receiptSourceDatabaseTests)
+import ReceiptSourceTest (receiptSourceTests)
+import ReceiptAIProviderTest (receiptAIProviderTests)
+import ReceiptAITest (receiptAITests)
+import ReceiptAISettingsTest (receiptAISettingsTests)
+import ReceiptAIUsageTest (receiptAIUsageTests)
 import ReportTest (reportTests)
 import RequestProtectionTest (requestProtectionTests)
 import StatisticsTest (statisticsTests)
@@ -35,4 +43,4 @@ main = do
   case arguments of
     ["--oidc-provider", portText] | Just port <- readMaybe portText, port > 0 && port <= 65535 -> runOidcProvider port
     "--oidc-provider" : _ -> fail "Usage: --oidc-provider PORT (1-65535)"
-    _ -> withArgs arguments $ defaultMain $ testGroup "Jizhang" [requestProtectionTests, configTests, environmentAuthenticationTests, moneyTests, currencyTests, exchangeRateTests, recordQueryTests, reportTests, statisticsTests, apiTests, databaseRecoveryTests, exchangeQuoteTests, oidcTests, oidcDtoTests, authLogTests, authSessionTests, oidcFlowTests, authAccountTests, logoutTests, adminAuthenticationTests]
+    _ -> withArgs arguments $ defaultMain $ testGroup "Jizhang" [requestProtectionTests, configTests, environmentAuthenticationTests, moneyTests, currencyTests, receiptImportTests, receiptImageTests, receiptSourceDatabaseTests, receiptSourceTests, receiptAIProviderTests, receiptAITests, receiptAISettingsTests, receiptAIUsageTests, exchangeRateTests, recordQueryTests, reportTests, statisticsTests, apiTests, databaseRecoveryTests, exchangeQuoteTests, oidcTests, oidcDtoTests, authLogTests, authSessionTests, oidcFlowTests, authAccountTests, logoutTests, adminAuthenticationTests]

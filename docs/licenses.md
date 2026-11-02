@@ -25,6 +25,25 @@ The client copy of the project license is
 [`client/assets/legal/mit.txt`](../client/assets/legal/mit.txt). Keep it verbatim
 with the root `LICENSE`; the admin page also reproduces that notice.
 
+## HEIC/HEIF decoder
+
+Both web clients distribute an unmodified `libheif-js@1.23.5` decoder separately
+from application code. Its libheif/libde265 and Emscripten runtime components
+retain their own LGPL/GPL, MIT, and other component notices; Jizhang's MIT license
+does not replace those terms.
+
+Keep all four files in `client/web/vendor/libheif/` together: the replaceable
+browser bundle, verbatim `LICENSES.txt`, `SOURCE.txt`, and
+`corresponding-source.tar.gz`. The archive contains the pinned library, wrapper,
+build-script, libde265, and Emscripten sources. `SOURCE.txt` records versions,
+archive hashes, upstream locations, and rebuild/replacement commands.
+
+Flutter registers the notices and source instructions in its license registry
+and copies the decoder distribution into the web output. The admin license page
+links to the same checked-in files through fixed `/admin-ui/vendor/libheif/`
+paths, including the downloadable source archive. Distribute these actual files,
+not only upstream URLs, and retain their notices when replacing the decoder.
+
 ## Distributing binaries and containers
 
 Review the exact Haskell, native-library, web-server, and runtime dependencies in

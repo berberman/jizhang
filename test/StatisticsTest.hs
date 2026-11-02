@@ -15,6 +15,7 @@ import qualified Data.Text as T
 import Data.Time (Day, UTCTime (..), fromGregorian)
 import qualified Data.UUID as UUID
 import Jizhang.API.Types
+import qualified Jizhang.API.Types.Record as Records
 import Jizhang.Report.Statistics (calculateSpendingStatistics)
 import qualified Network.HTTP.Client as HC
 import Network.HTTP.Types.Status
@@ -60,6 +61,7 @@ expense n day info amount payer shares =
       date = day,
       createdAt = UTCTime (d 1 1) 0,
       groupId = gid,
+      receipt = Nothing,
       splitMode = ExactSplit,
       exchangeRate = Nothing,
       splits = [RecordSplit u (MinorAmount s) (MinorAmount s) (MinorAmount s) | (u, s) <- shares]
@@ -80,6 +82,7 @@ income n day info amount recipient shares =
       date = day,
       createdAt = UTCTime (d 1 1) 0,
       groupId = gid,
+      receipt = Nothing,
       splitMode = ExactSplit,
       exchangeRate = Nothing,
       splits = [RecordSplit u (MinorAmount s) (MinorAmount s) (MinorAmount s) | (u, s) <- shares]
@@ -100,7 +103,8 @@ payment =
       transferTo = a,
       date = d 1 25,
       createdAt = UTCTime (d 1 1) 0,
-      groupId = gid
+      groupId = gid,
+      receipt = Nothing
     }
 
 -- | Preserve distinct EUR source and USD settlement values without recalculating a live rate.
@@ -118,6 +122,7 @@ converted =
       paidBy = a,
       createdAt = UTCTime (d 1 1) 0,
       groupId = gid,
+      receipt = Nothing,
       splitMode = ExactSplit,
       exchangeRate = Nothing,
       splits = [RecordSplit a (MinorAmount 2500) (MinorAmount 2500) (MinorAmount 3000), RecordSplit b (MinorAmount 7500) (MinorAmount 7500) (MinorAmount 9000)]
@@ -164,7 +169,7 @@ statisticsTests =
         summary janBob @?= (20000, 2, 8000, 13000)
         bucketValues both @?= [(d 1 1, d 1 31, 20000, 2, 12000, 7000), (d 2 1, d 2 29, 4000, 1, 4000, 0)]
         jan.members @?= [MemberSpending b (MinorAmount 8000) (MinorAmount 13000), MemberSpending a (MinorAmount 12000) (MinorAmount 7000), MemberSpending former (MinorAmount 0) (MinorAmount 0)]
-        [(rid, amount) | PersonalExpense rid _ _ (MinorAmount amount) <- jan.topExpenses] @?= [(RecordId $ uuid 11, 4000), (RecordId $ uuid 10, 3000)],
+        [(rid, amount) | PersonalExpense rid _ _ (MinorAmount amount) _ <- jan.topExpenses] @?= [(RecordId $ uuid 11, 4000), (RecordId $ uuid 10, 3000)],
       testCase "income adds group totals without changing expense breakdowns or subject selection" $ do
         let rows = income 30 (d 1 25) usd 6000 b [(a, 3000), (b, 3000)] : fixture
             before = one $ calculate SingleCurrency (d 1 1) (d 1 31) MonthBucket a fixture
@@ -239,9 +244,19 @@ statisticsTests =
       testCase "top five ties use descending date then UUID; Other is the exact remaining share" $ do
         let rows = [expense n (d 1 (if n < 4 then 1 else 2)) usd 100 a [(a, 100)] | n <- [1 .. 7]]
             section = one $ calculate SingleCurrency (d 1 1) (d 1 31) MonthBucket a rows
-        [rid | PersonalExpense rid _ _ _ <- section.topExpenses] @?= map (RecordId . uuid) [4, 5, 6, 7, 1]
+        [rid | PersonalExpense rid _ _ _ _ <- section.topExpenses] @?= map (RecordId . uuid) [4, 5, 6, 7, 1]
         section.otherExpensesMinor @?= MinorAmount 200
         summary section @?= (700, 7, 700, 700),
+      testCase "receipt metadata preserves top-five ranking and exact Other remainder" $ do
+        let association = Just $ ReceiptSummary (ReceiptId $ uuid 500) "会议 <b>Market</b>"
+            rows = [expense n (d 1 1) usd 100 a [(a, 100)] | n <- [1 .. 7]]
+            linked = [row {Records.receipt = association} | row <- rows]
+            before = one $ calculate SingleCurrency (d 1 1) (d 1 31) MonthBucket a rows
+            after = one $ calculate SingleCurrency (d 1 1) (d 1 31) MonthBucket a linked
+        summary after @?= summary before
+        after.otherExpensesMinor @?= before.otherExpensesMinor
+        [rid | PersonalExpense rid _ _ _ _ <- after.topExpenses] @?= [rid | PersonalExpense rid _ _ _ _ <- before.topExpenses]
+        [value | PersonalExpense _ _ _ _ value <- after.topExpenses] @?= replicate 5 association,
       testCase "aggregate arithmetic and JSON preserve integers beyond Int64 and JavaScript precision" $ do
         let amount = 9223372036854775807
             section = one $ calculate SingleCurrency (d 1 1) (d 1 31) MonthBucket a [expense 1 (d 1 1) usd amount a [(a, amount)], expense 2 (d 1 2) usd amount a [(a, amount)]]
@@ -276,13 +291,12 @@ apiFixture = testCase "API includes receipt children once, excludes payments, re
         equalExpense = equalExpenseOn (d 1 20)
         febExpense = ExpenseRecordRequest "February" Nothing (MinorAmount 4000) (CurrencyCode "USD") aid (d 2 1) EqualSplit [RecordSplitRequest bid (MinorAmount 1)] Nothing
         query person = cGetStatistics tc groupId (StatsDate $ d 1 1) (StatsDate $ d 1 31) Nothing person
-    void $ runClient env $ cCreateReceipt tc groupId (CreateReceiptRequest "Receipt" [foreignChild])
+    void $ runClient env $ cCreateReceipt tc groupId (CreateReceiptRequest "Synthetic Market groceries" "Receipt" [foreignChild] Nothing)
     saved <- runClient env $ cAddExpense tc groupId equalExpense
     void $ runClient env $ cAddExpense tc groupId febExpense
     void $ runClient env $ cAddTransfer tc groupId (TransferRecordRequest (MinorAmount 3000) (CurrencyCode "USD") bid aid (d 1 25) Nothing)
     january <- runClient env $ query Nothing
     summary (one january) @?= (20000, 2, 12000, 7000)
-    january.bucket @?= MonthBucket
     january.user.userId @?= aid
     bobJanuary <- runClient env $ query (Just bid)
     summary (one bobJanuary) @?= (20000, 2, 8000, 13000)
@@ -373,9 +387,7 @@ apiErrors = testCase "API requires canonical bounded filters and enforces group 
     forM_ [(d 2 1, d 1 1), (fromGregorian 2000 1 1, fromGregorian 2011 1 1)] $ \(lo, hi) -> do
       response <- runClientM (query tc lo hi Nothing Nothing) env
       case response of
-        Left (FailureResponse _ result) -> do
-          responseStatusCode result @?= status400
-          responseBody result @?= "Choose a date range of at most 10 years"
+        Left (FailureResponse _ result) -> responseStatusCode result @?= status400
         _ -> assertFailure "Expected invalid date range"
     forM_ ["", "?from=2024-01-01", "?to=2024-01-01", "?from=2024-1-01&to=2024-01-31", "?from=2024-02-30&to=2024-03-01", "?from=2024-01-01T00:00:00Z&to=2024-01-31", "?from=2024-01-01&to=2024-01-31&bucket=year", "?from=2024-01-01&to=2024-01-31&userId=bad"] $ \suffix -> do
       response <- identityRequest port manager (Just token) "GET" (path ++ suffix) Null

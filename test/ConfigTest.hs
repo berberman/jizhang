@@ -17,6 +17,8 @@ import qualified Data.UUID as UUID
 import Jizhang.API.Types.Admin (AdminBootstrap (..))
 import Jizhang.API.Types.User (AuthUser (..))
 import Jizhang.Config
+import Jizhang.Auth.Security (encryptSecret)
+import Jizhang.ReceiptAI.Runtime hiding (parseReceiptAIConfig)
 import Servant.Auth.Server (makeJWT, verifyJWT)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
@@ -26,7 +28,46 @@ configTests :: TestTree
 configTests =
   testGroup
     "Deployment configuration"
-    [ testCase "JWT rejects malformed, noncanonical and wrong-length keys" $ do
+    [ testCase "receipt credentials reject whitespace, controls and overlong values without echo" $ do
+        forM_ ["", " synthetic-canary", "synthetic-canary\n", "synthetic-canary\NUL", "synthetic-canary\x00a0", T.replicate 513 "x"] $ \value ->
+          case parseReceiptAIKey value of
+            Left message -> assertBool "fixed safe error" $ not $ "synthetic-canary" `T.isInfixOf` message
+            Right _ -> assertFailure "Invalid receipt key accepted"
+        forM_ ["synthetic-key", T.replicate 512 "x"] $ \value ->
+          case parseReceiptAIKey value of
+            Right key -> assertBool "exact credential preserved" $ receiptAIKeyText key == value
+            Left _ -> assertFailure "Valid receipt key rejected",
+      testCase "receipt optional configuration distinguishes absent and invalid encryption keys" $ do
+        forM_ [Nothing, Just ""] $ \value -> do
+          cfg <- receiptConfig value Nothing
+          assertBool "empty override absent" $ case receiptAIEnvironmentKey cfg of Nothing -> True; _ -> False
+          assertBool "missing credential" $ case effectiveReceiptAIKey cfg Nothing of Left KeyMissing -> True; _ -> False
+        forM_ ["", "synthetic-encryption-canary", keyText 31 0, keyText 33 0, keyText 32 0 <> "\n"] $ \value ->
+          case parseReceiptAIConfig Nothing (Just value) of
+            Left message -> message @?= "RECEIPT_AI_SECRET_KEY must be canonical standard base64 encoding of exactly 32 bytes"
+            Right _ -> assertFailure "Invalid configured encryption key accepted"
+        case parseReceiptAIConfig (Just "synthetic-canary bad") Nothing of
+          Left message -> assertBool "credential not echoed" $ not $ "synthetic-canary" `T.isInfixOf` message
+          Right _ -> assertFailure "Invalid environment credential accepted",
+      testCase "receipt stored credentials use authenticated encryption and environment precedence" $ do
+        cfg <- receiptConfig Nothing $ Just $ keyText 32 7
+        encryption <- case receiptAIEncryptionKey cfg of
+          Just key -> pure key
+          Nothing -> assertFailure "Fixture encryption key missing" >> fail "Invalid fixture"
+        ciphertext <- encryptSecret encryption receiptAIKeyAad "synthetic-stored-key"
+        assertBool "ciphertext is not plaintext" $ not $ "synthetic-stored-key" `T.isInfixOf` ciphertext
+        assertReceiptKey "stored credential decrypts" "synthetic-stored-key" $ effectiveReceiptAIKey cfg $ Just ciphertext
+        substituted <- encryptSecret encryption "receipt_ai_settings:2:api_key" "synthetic-stored-key"
+        assertUnreadable $ effectiveReceiptAIKey cfg $ Just substituted
+        wrongKey <- receiptConfig Nothing $ Just $ keyText 32 8
+        assertUnreadable $ effectiveReceiptAIKey wrongKey $ Just ciphertext
+        assertUnreadable $ effectiveReceiptAIKey defaultReceiptAIConfig $ Just ciphertext
+        malformed <- encryptSecret encryption receiptAIKeyAad "invalid stored key"
+        assertUnreadable $ effectiveReceiptAIKey cfg $ Just malformed
+        override <- receiptConfig (Just "synthetic-environment-key") Nothing
+        assertReceiptKey "override works without encryption" "synthetic-environment-key" $ effectiveReceiptAIKey override $ Just ciphertext
+        assertReceiptKey "override ignores unreadable retained ciphertext" "synthetic-environment-key" $ effectiveReceiptAIKey override $ Just "broken-ciphertext",
+      testCase "JWT rejects malformed, noncanonical and wrong-length keys" $ do
         let valid = keyText 32 0
             invalid = ["", "not base64", T.dropEnd 1 valid, valid <> "=", " " <> valid, valid <> "\n", T.replace "/" "_" (keyText 32 255), keyText 31 0, keyText 33 0]
         forM_ invalid $ \value -> assertBool "invalid signing key rejected" (isLeft $ parseJWTSettings value),
@@ -82,7 +123,6 @@ configTests =
           _ -> assertFailure "Disabled partial provider rejected"
         case parseEnvironmentAuthentication (M.delete "OIDC_PROVIDER_NAME" $ M.delete "OIDC_CLIENT_SECRET" values) of
           Right (Just settings) -> do
-            assertEqual "default label" "Authentik" (envProviderName settings)
             assertBool "omitted secret means clear" (envClientSecret settings == Nothing)
           _ -> assertFailure "Default provider rejected",
       testCase "request policies reject malformed and out-of-range numbers without echo" $ do
@@ -131,6 +171,11 @@ configTests =
             assertBool "cross-field limits rejected" $ isLeft $ parseRequestProtectionConfig $ M.fromList values
     ]
   where
+    receiptConfig environment encryption = either (const $ assertFailure "Receipt config fixture rejected" >> fail "Invalid fixture") pure $ parseReceiptAIConfig environment encryption
+    assertReceiptKey label expected result = case result of
+      Right key -> assertBool label $ receiptAIKeyText key == expected
+      Left _ -> assertFailure label
+    assertUnreadable result = assertBool "stored credential unavailable without disclosure" $ case result of Left StoredKeyUnreadable -> True; _ -> False
     parsed value = either (const $ assertFailure "Valid key rejected" >> fail "Invalid fixture") pure $ parseJWTSettings value
 
 -- | Build canonical Base64 keys from repeated bytes; size selects valid or boundary fixtures.

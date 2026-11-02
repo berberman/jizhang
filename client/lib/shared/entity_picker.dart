@@ -390,16 +390,19 @@ class _UserPickerFieldState extends State<UserPickerField> {
           minimumSize: const Size.fromHeight(48),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         ),
-        child: Row(children: [
-          const Icon(Icons.person_outline),
-          const SizedBox(width: 8),
-          Expanded(child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [Text(label), if (former) const Text('Former member')],
-          )),
-          const SizedBox(width: 8),
-          Text(id == null ? 'Choose' : 'Change'),
-        ]),
+        child: LayoutBuilder(builder: (context, constraints) => constraints.maxWidth < 200
+          ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Text(label), if (former) const Text('Former member'),
+              Align(alignment: Alignment.centerRight, child: Text(id == null ? 'Choose' : 'Change')),
+            ])
+          : Row(children: [
+              const Icon(Icons.person_outline),
+              const SizedBox(width: 8),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                children: [Text(label), if (former) const Text('Former member')])),
+              const SizedBox(width: 8),
+              Text(id == null ? 'Choose' : 'Change'),
+            ])),
       ),
     );
   }

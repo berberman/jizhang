@@ -23,6 +23,17 @@ persistence. `Jizhang.API.Types.*` contains the shared request/response types;
 - `API.App` owns the handler environment, connection serialization, transaction
   policies and SQL error mapping. `API.Internal.Resource` centralizes resource
   lookup/authorization; `API.Internal.Error` converts failures to HTTP responses.
+- `ReceiptAI.Contract` loads the packaged prompt/schema; `ReceiptAI.Image` accepts
+  bounded JPEGs only; `ReceiptAI.Provider` owns the fixed HTTPS request and bounded
+  response decoder. `ReceiptAI.Review` contains pure evidence diagnostics and
+  exact import calculations, independent from saved financial allocations.
+- `API.Receipt.Source` validates source provenance and prepares attachments for
+  private receipt transactions. `API.ReceiptAI` records one durable usage attempt
+  around the injectable provider call without holding SQL locks across HTTP.
+  `API.App` private runners suppress SQL parameter logging and sanitize errors.
+- `Database.ReceiptAI` stores revisioned encrypted configuration and metadata-only
+  usage. `Database.Receipt` projects source metadata separately from image bytes
+  and historical evidence. PostgreSQL cascades source deletion with its receipt.
 
 ## Dependency rules
 

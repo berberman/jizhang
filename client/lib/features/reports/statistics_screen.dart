@@ -219,7 +219,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
           const SizedBox(height: 16),
           LayoutBuilder(builder: (context, c) {
             final time = SpendingTimeChart(key: ValueKey('time:$_currency:$_view'), spending: section, personal: _view == 'personal');
-            final breakdown = _view == 'personal' ? SpendingExpenseBars(spending: section, subjectLabel: subject, onExpense: (e) => context.push<void>('/groups/${widget.groupId}/records/${e.recordId}')) : SpendingMembersChart(spending: section, paid: _measure == 'paid', activeIds: group.members.map((u) => u.userId).toSet(), onMeasureChanged: (paid) { _measure = paid ? 'paid' : 'share'; _navigate(); });
+            final breakdown = _view == 'personal' ? SpendingExpenseBars(spending: section, subjectLabel: subject, onExpense: (e) => context.push<void>('/groups/${widget.groupId}/records/${e.recordId}'), onReceipt: (receipt) => context.push<void>('/groups/${widget.groupId}/receipts/${receipt.receiptId}')) : SpendingMembersChart(spending: section, paid: _measure == 'paid', activeIds: group.members.map((u) => u.userId).toSet(), onMeasureChanged: (paid) { _measure = paid ? 'paid' : 'share'; _navigate(); });
             return c.maxWidth >= 900 ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: time), const SizedBox(width: 16), Expanded(child: breakdown)]) : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [time, const SizedBox(height: 16), breakdown]);
           }),
         ],

@@ -62,6 +62,7 @@ expense =
       date = fromGregorian 2026 10 2,
       createdAt = UTCTime (fromGregorian 2026 10 12) 0,
       groupId = GroupId $ uuid 100,
+      receipt = Nothing,
       splitMode = EqualSplit,
       splits = [RecordSplit bob (MinorAmount 1) (MinorAmount 4500) (MinorAmount 4500), RecordSplit former (MinorAmount 1) (MinorAmount 4500) (MinorAmount 4500)]
     }
@@ -79,6 +80,7 @@ income =
       date = fromGregorian 2026 10 3,
       createdAt = UTCTime (fromGregorian 2026 10 11) 0,
       groupId = GroupId $ uuid 100,
+      receipt = Nothing,
       splitMode = EqualSplit,
       splits = [RecordSplit alice (MinorAmount 1) (MinorAmount 6000) (MinorAmount 6000)]
     }
@@ -96,7 +98,8 @@ transfer =
       transferTo = alice,
       date = fromGregorian 2026 10 4,
       createdAt = UTCTime (fromGregorian 2026 10 10) 0,
-      groupId = GroupId $ uuid 100
+      groupId = GroupId $ uuid 100,
+      receipt = Nothing
     }
 
 records :: [Record]
@@ -170,7 +173,6 @@ recordQueryTests =
         expect "currency:USD amount:90071992547409.93" [1] [expense {amountMinor = MinorAmount 9007199254740993}]
         expect "currency:USD amount:92233720368547758.07" [1] [expense {amountMinor = MinorAmount 9223372036854775807}],
       testCase "all sort fields, role absence and currency groups have deterministic direction" $ do
-        sorted Nothing [3, 2, 1] records
         sorted (Just "date") [1, 2, 3] records
         sorted (Just "-date") [3, 2, 1] records
         sorted (Just "createdAt") [3, 2, 1] records

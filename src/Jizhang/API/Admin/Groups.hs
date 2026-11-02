@@ -30,6 +30,7 @@ module Jizhang.API.Admin.Groups
     getGroupReport,
     createReceipt,
     getGroupReceipts,
+    getAdminReceipt,
     bulkDeleteReceipts,
     deleteReceipt,
     updateReceipt,
@@ -47,17 +48,18 @@ import Data.UUID (UUID, toText)
 import Jizhang.API.Admin.Common
 import Jizhang.API.Group (getGroup)
 import Jizhang.API.GroupImport
-import Jizhang.API.Receipt (getReceiptsByGroupId)
-import Jizhang.API.Record.Service (addExpenseRecords, getRecordPage)
+import Jizhang.API.Receipt (buildReceiptResponse, getReceiptsByGroupId)
+import Jizhang.API.Record.Service (addExpenseRecords, getGroupReceiptSummaryMap, getRecordPage)
 import Jizhang.API.Report (getReportByGroupId)
 import Jizhang.API.App
+import Jizhang.API.Receipt.Source (prepareReceiptSource, persistReceiptSource)
 import Jizhang.API.RequestProtection (enforceExpensiveLimit)
 import Jizhang.RequestProtection (Principal (AdminPrincipal))
 import Jizhang.API.Types
 import Jizhang.API.Internal.Error (fromStoredData, fetchOrFail)
 import Jizhang.API.User.Projection (resolveUser)
 import Jizhang.API.Record.Projection (recordToSplitRecord, recordToTransferRecord, recordToApiRecord)
-import Jizhang.API.Record.Input (resolveExpenseRequest, resolveIncomeRequest, resolveTransferRequest, inputCurrency, withGroupCurrencyLock)
+import Jizhang.API.Record.Input (resolveExpenseRequest, resolveIncomeRequest, resolveTransferRequest, inputCurrency, withGroupCurrencyLock, withGroupCurrencyLockPrivate)
 import Jizhang.API.Internal.Resource (lookupUserById, getGroupUserMap, ensureGroupExists, validateGroupName, ensureActiveGroupUser, ensureRecordExists, ensureReceiptExists)
 import qualified Jizhang.Database as D
 import qualified Jizhang.Database.Schema as S
@@ -191,7 +193,7 @@ addExpenseRecord authAdmin (GroupId gid) req = do
   (record, recordSplits) <- withGroupCurrencyLock group $ D.insertSplitRecord D.ExpenseKind gid Nothing resolved
   um <- getGroupUserMap gid
   currencies <- asks appCurrencies
-  fromStoredData $ recordToSplitRecord D.ExpenseKind currencies um record recordSplits
+  fromStoredData $ recordToSplitRecord D.ExpenseKind currencies um M.empty record recordSplits
 
 addIncomeRecord :: AuthAdmin -> GroupId -> IncomeRecordRequest -> MyHandler Record
 addIncomeRecord authAdmin (GroupId gid) req = do
@@ -201,7 +203,7 @@ addIncomeRecord authAdmin (GroupId gid) req = do
   (record, recordSplits) <- withGroupCurrencyLock group $ D.insertSplitRecord D.IncomeKind gid Nothing resolved
   um <- getGroupUserMap gid
   currencies <- asks appCurrencies
-  fromStoredData $ recordToSplitRecord D.IncomeKind currencies um record recordSplits
+  fromStoredData $ recordToSplitRecord D.IncomeKind currencies um M.empty record recordSplits
 
 addTransferRecord :: AuthAdmin -> GroupId -> TransferRecordRequest -> MyHandler Record
 addTransferRecord authAdmin (GroupId gid) req@TransferRecordRequest {..} = do
@@ -211,7 +213,7 @@ addTransferRecord authAdmin (GroupId gid) req@TransferRecordRequest {..} = do
   record <- withGroupCurrencyLock group $ D.insertTransferRecord gid resolved
   um <- getGroupUserMap gid
   currencies <- asks appCurrencies
-  fromStoredData $ recordToTransferRecord currencies um (coerce toUserId) record
+  fromStoredData $ recordToTransferRecord currencies um M.empty (coerce toUserId) record
 
 getGroupRecords :: AuthAdmin -> GroupId -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> MyHandler (PaginatedResponse Record)
 getGroupRecords authAdmin gid query offset limit sort = do
@@ -297,21 +299,32 @@ createReceipt authAdmin (GroupId gid) AdminCreateReceiptRequest {..} = do
   group <- fst <$> (fetchOrFail "Group" gid $ runDB (D.getGroupWithMembers gid))
   ensureActiveGroupUser gid uploadedByUserId
   resolved <- mapM (resolveExpenseRequest group) records
-  (receipt, dbRecords) <- (if null resolved then runDBTransaction else withGroupCurrencyLock group) $ do
-    rct <- D.insertReceipt gid (coerce uploadedByUserId) note
+  preparedSource <- prepareReceiptSource gid records (maybe KeepReceiptSource ReplaceReceiptSource source)
+  (receipt, dbRecords) <- (if null resolved then runDBPrivateTransaction else withGroupCurrencyLockPrivate group) $ do
+    rct <- D.insertReceipt gid (coerce uploadedByUserId) title note
     let rctId = S._receiptId rct
     recs <- forM resolved $ D.insertSplitRecord D.ExpenseKind gid (Just rctId)
+    persistReceiptSource rctId preparedSource
     pure (rct, recs)
   um <- getGroupUserMap gid
   currencies <- asks appCurrencies
-  apiRecords <- fromStoredData $ traverse (uncurry (recordToSplitRecord D.ExpenseKind currencies um)) dbRecords
+  let summaries = M.singleton (S._receiptId receipt) (ReceiptSummary (coerce $ S._receiptId receipt) title)
+  apiRecords <- fromStoredData $ traverse (uncurry (recordToSplitRecord D.ExpenseKind currencies um summaries)) dbRecords
   let uploadedByApiUser = resolveUser um (S.unUserId $ S._receiptUploadedBy receipt)
-  pure $ Receipt (coerce $ S._receiptId receipt) (coerce gid) uploadedByApiUser note apiRecords (S._receiptCreatedAt receipt)
+  sourceMeta <- runDBPrivate $ D.getReceiptSourceMeta gid (S._receiptId receipt)
+  pure $ Receipt (coerce $ S._receiptId receipt) (coerce gid) uploadedByApiUser title note apiRecords (S._receiptCreatedAt receipt) sourceMeta
 
 getGroupReceipts :: AuthAdmin -> GroupId -> MyHandler [Receipt]
 getGroupReceipts authAdmin (GroupId gid) = do
   logTrace_ $ "Fetching group receipts for admin: " <> authAdminUsername authAdmin
   getReceiptsByGroupId gid
+
+getAdminReceipt :: AuthAdmin -> GroupId -> ReceiptId -> MyHandler Receipt
+getAdminReceipt _ (GroupId gid) (ReceiptId rid) = do
+  receipt <- fetchOrFail "Receipt" rid $ runDB (D.getReceipt gid rid)
+  um <- getGroupUserMap gid
+  currencies <- asks appCurrencies
+  buildReceiptResponse currencies um receipt
 
 bulkDeleteReceipts :: AuthAdmin -> GroupId -> BulkRequest ReceiptId -> MyHandler NoContent
 bulkDeleteReceipts authAdmin (GroupId gid) (BulkRequest receiptIds) = do
@@ -319,7 +332,7 @@ bulkDeleteReceipts authAdmin (GroupId gid) (BulkRequest receiptIds) = do
   group <- fst <$> (fetchOrFail "Group" gid $ runDB (D.getGroupWithMembers gid))
   forM_ receiptIds $ \(ReceiptId rid) -> ensureReceiptExists gid rid
   children <- runDB $ concat <$> mapM (\(ReceiptId rid) -> D.getRecordsForReceipt gid rid) receiptIds
-  (if null children then runDBTransaction else withGroupCurrencyLock group) $
+  (if null children then runDBPrivateTransaction else withGroupCurrencyLockPrivate group) $
     forM_ receiptIds $
       \(ReceiptId rid) -> D.deleteReceiptWithRecords gid rid
   pure NoContent
@@ -330,7 +343,7 @@ deleteReceipt authAdmin (GroupId gid) (ReceiptId rid) = do
   group <- fst <$> (fetchOrFail "Group" gid $ runDB (D.getGroupWithMembers gid))
   ensureReceiptExists gid rid
   children <- runDB $ D.getRecordsForReceipt gid rid
-  (if null children then runDBTransaction else withGroupCurrencyLock group) $
+  (if null children then runDBPrivateTransaction else withGroupCurrencyLockPrivate group) $
     D.deleteReceiptWithRecords gid rid
   pure NoContent
 
@@ -339,12 +352,18 @@ updateReceipt authAdmin (GroupId gid) (ReceiptId rid) UpdateReceiptRequest {..} 
   enforceExpensiveLimit (AdminPrincipal $ authAdminId authAdmin)
   logInfo_ $ "Updating receipt " <> toText rid <> " in group " <> toText gid <> " as admin: " <> authAdminUsername authAdmin
   group <- fst <$> (fetchOrFail "Group" gid $ runDB (D.getGroupWithMembers gid))
-  receipt <- fetchOrFail "Receipt" rid $ runDB (D.getReceipt gid rid)
   resolved <- mapM (resolveExpenseRequest group) records
-  dbRecords <-
-    (if null resolved then runDBTransaction else withGroupCurrencyLock group) $
-      D.replaceReceiptRecords gid rid note resolved
-  buildUpdatedReceipt gid rid note receipt dbRecords
+  preparedSource <- prepareReceiptSource gid records source
+  (receipt, dbRecords) <- fetchOrFail "Receipt" rid $
+    (if null resolved then runDBPrivateTransaction else withGroupCurrencyLockPrivate group) $ do
+      locked <- D.lockReceipt gid rid
+      case locked of
+        Nothing -> pure Nothing
+        Just receipt -> do
+          children <- D.replaceReceiptRecords gid rid title note resolved
+          persistReceiptSource rid preparedSource
+          pure $ Just (receipt, children)
+  buildUpdatedReceipt gid rid title note receipt dbRecords
 
 -- | Return whether an inactive membership can be reused instead of inserting history anew.
 resolveAddableGroupMember :: UUID -> UserId -> MyHandler (S.User, Bool)
@@ -379,13 +398,15 @@ loadAllGroups = do
   mapM (getGroup . coerce) groupIds
 
 -- | Keep original uploader and creation time while projecting replacement expenses.
-buildUpdatedReceipt :: UUID -> UUID -> Text -> S.Receipt -> [(S.Record, [S.RecordSplit])] -> MyHandler Receipt
-buildUpdatedReceipt gid rid note receipt dbRecords = do
+buildUpdatedReceipt :: UUID -> UUID -> Text -> Text -> S.Receipt -> [(S.Record, [S.RecordSplit])] -> MyHandler Receipt
+buildUpdatedReceipt gid rid title note receipt dbRecords = do
   um <- getGroupUserMap gid
   currencies <- asks appCurrencies
-  apiRecords <- fromStoredData $ traverse (uncurry (recordToSplitRecord D.ExpenseKind currencies um)) dbRecords
+  let summaries = M.singleton rid (ReceiptSummary (coerce rid) title)
+  apiRecords <- fromStoredData $ traverse (uncurry (recordToSplitRecord D.ExpenseKind currencies um summaries)) dbRecords
   let uploadedByUser = resolveUser um (S.unUserId $ S._receiptUploadedBy receipt)
-  pure $ Receipt (coerce rid) (coerce gid) uploadedByUser note apiRecords (S._receiptCreatedAt receipt)
+  sourceMeta <- runDBPrivate $ D.getReceiptSourceMeta gid rid
+  pure $ Receipt (coerce rid) (coerce gid) uploadedByUser title note apiRecords (S._receiptCreatedAt receipt) sourceMeta
 
 -- | Scope the record lookup to its parent group and validate its persisted projection.
 getAdminRecord :: UUID -> UUID -> MyHandler Record
@@ -393,7 +414,8 @@ getAdminRecord gid rid = do
   (record, ssplits) <- fetchOrFail "Record" rid $ runDB (D.getRecordWithSplits gid rid)
   um <- getGroupUserMap gid
   currencies <- asks appCurrencies
-  fromStoredData $ recordToApiRecord currencies um record ssplits
+  receipts <- getGroupReceiptSummaryMap gid
+  fromStoredData $ recordToApiRecord currencies um receipts record ssplits
 
 filterGroups :: Maybe Text -> [Group] -> [Group]
 filterGroups Nothing = id

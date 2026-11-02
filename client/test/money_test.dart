@@ -102,6 +102,24 @@ void main() {
       expect(validateMoneySplits('exact', BigInt.from(100), rows([0, 100])), isNull);
     });
 
+    test('key allocation preserves input order and stable one-cent ties', () {
+      final weights = [
+        MoneyKeyValue('line_b', BigInt.one),
+        MoneyKeyValue('line_a', BigInt.one),
+        MoneyKeyValue('line_zero', BigInt.zero),
+      ];
+      final result = apportionByKey(BigInt.one, weights);
+      expect(result.map((row) => row.key), ['line_b', 'line_a', 'line_zero']);
+      expect(result.map((row) => row.value), [BigInt.zero, BigInt.one, BigInt.zero]);
+      final reversed = apportionByKey(BigInt.one, weights.reversed.toList());
+      expect(reversed.map((row) => row.key), ['line_zero', 'line_a', 'line_b']);
+      expect(reversed.map((row) => row.value), [BigInt.zero, BigInt.one, BigInt.zero]);
+      expect(apportionByKey(BigInt.zero, weights).every((row) => row.value == BigInt.zero), isTrue);
+      expect(() => apportionByKey(BigInt.one, [weights.first, weights.first]), throwsFormatException);
+      expect(() => apportionByKey(BigInt.one, [weights.last]), throwsFormatException);
+      expect(() => apportionByKey(BigInt.one, [MoneyKeyValue('negative', -BigInt.one)]), throwsFormatException);
+    });
+
     test('zero weights never get residue and generic weights are not shares', () {
       expect(byUser(apportion(BigInt.one, rows([0, 1, 1]))), {
         a: BigInt.zero, b: BigInt.one, c: BigInt.zero,

@@ -66,6 +66,9 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Text(record.title, style: Theme.of(context).textTheme.headlineSmall),
           Text(switch (record.kind) { RecordKind.expense => 'Expense', RecordKind.income => 'Income', RecordKind.transfer => 'Payment / Transfer' }),
+          if (record.receipt case final receipt?) Align(alignment: Alignment.centerLeft,
+            child: ReceiptAssociationLink(receipt: receipt,
+              onPressed: () => context.push<void>('/groups/${record.groupId}/receipts/${receipt.receiptId}'))),
           const SizedBox(height: 16),
           Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch, children: [

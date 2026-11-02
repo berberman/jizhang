@@ -109,7 +109,7 @@ const Statistics = (() => {
     render(); card.append(list); if (sorted.length > 10) card.append(more);
     card.append(table([{ label: 'Member', title: true }, { label: `Allocated share (${currency.code})`, numeric: true }, { label: `Paid (${currency.code})`, numeric: true }], sorted.map((row) => [userLabel(row.user), money(row.shareMinor, currency), money(row.paidMinor, currency)]))); return card;
   }
-  function expenses(subject, currency, section, openExpense) {
+  function expenses(subject, currency, section, openExpense, openReceipt) {
     const title = `${subject} · Top five expense shares`;
     const card = append(node('section', null, 'statistics-chart stack'), node('h2', title));
     const total = BigInt(section.shareMinor);
@@ -124,6 +124,10 @@ const Statistics = (() => {
       const control = button('Open expense', () => openExpense(entry.recordId), 'secondary statistics-expense-action', `statistics-expense-${location}-${entry.recordId}`);
       control.setAttribute('aria-label', `Open expense: ${entry.title} · ${entry.date}`); return control;
     };
+    const association = entry => {
+      const control = button(`Receipt: ${entry.receipt.title}`, () => openReceipt(entry.receipt), 'secondary receipt-association');
+      control.setAttribute('aria-label', `Open receipt: ${entry.receipt.title}`); return control;
+    };
     if (total === 0n) card.append(node('p', 'No allocated spending in this date range', 'empty-state'));
     else {
       card.append(node('p', `Bar scale: 0 to ${money(maximum, currency)}`, 'muted'));
@@ -133,6 +137,7 @@ const Statistics = (() => {
         const label = node('div', null, 'statistics-expense-label');
         label.append(node('strong', entry.other ? 'Other' : `${entry.rank}. ${entry.title}`));
         if (!entry.other) label.append(node('span', entry.date, 'statistics-date'));
+        if (!entry.other && entry.receipt) label.append(association(entry));
         row.append(label, node('span', `${money(entry.amount, currency)} · ${percent(entry.amount)}`, 'statistics-expense-value'));
         const track = node('span', null, 'statistics-expense-track'); track.setAttribute('aria-hidden', 'true');
         const fill = node('span'); fill.style.width = `${ratio(entry.amount, maximum) * 100}%`; track.append(fill); row.append(track);
@@ -142,7 +147,7 @@ const Statistics = (() => {
       card.append(list);
     }
     card.append(node('strong', `Total allocated share: ${money(total, currency)}`));
-    const rows = entries.map((entry) => [entry.rank ?? '—', entry.other ? 'Other' : entry.title, entry.date ?? '—', money(entry.amount, currency), percent(entry.amount), entry.other ? '—' : action(entry, 'table')]);
+    const rows = entries.map((entry) => [entry.rank ?? '—', entry.other ? 'Other' : append(node('div', null, 'stack gap-sm'), node('span', entry.title), entry.receipt && association(entry)), entry.date ?? '—', money(entry.amount, currency), percent(entry.amount), entry.other ? '—' : action(entry, 'table')]);
     rows.push(['—', 'Total', '—', money(total, currency), percent(total), '—']);
     card.append(table([{ label: 'Rank', numeric: true }, { label: 'Expense', title: true }, { label: 'Date', date: true }, { label: `Allocated share (${currency.code})`, numeric: true }, { label: 'Percent', numeric: true }, 'Action'], rows)); return card;
   }
@@ -251,7 +256,7 @@ function renderStatistics(root, group) {
       const charts = node('div', null, 'statistics-charts');
       const personalView = committed.view === 'personal';
       charts.append(Statistics.bars(personalView ? `${personal} · Expense share over time` : 'Group expenses over time', currency, selected.buckets.map((entry) => ({ ...entry, label: `${entry.start} – ${entry.end}`, shortLabel: entry.start, amount: BigInt(personalView ? entry.shareMinor : entry.totalMinor) }))));
-      charts.append(personalView ? Statistics.expenses(personal, currency, selected, openExpense) : Statistics.members(currency, selected.members, committed.memberMeasure, (memberMeasure) => navigate({ memberMeasure })));
+      charts.append(personalView ? Statistics.expenses(personal, currency, selected, openExpense, receipt => openAssociatedReceipt(group.groupId, receipt.receiptId)) : Statistics.members(currency, selected.members, committed.memberMeasure, (memberMeasure) => navigate({ memberMeasure })));
       content.append(charts, expenseError);
     },
   };

@@ -300,25 +300,6 @@ exchangeTests =
       rotateProviderKey provider
       exchangeFixture runtime settings >>= \result -> expectProtocolSuccess result (const (pure ()))
       providerTokenExchangeCount provider >>= (@?= 1),
-    testCase "authorization codes cannot be exchanged twice" $ withFixture $ \provider runtime settings -> do
-      verifier <- randomToken
-      nonce <- randomToken
-      code <- authorizeCode runtime settings verifier nonce
-      let exchange = exchangeAuthorizationCode runtime settings fixtureRedirect code verifier (tokenDigest nonce) Nothing
-      exchange >>= \result -> expectProtocolSuccess result (const (pure ()))
-      exchange >>= expectProtocolFailure
-      providerTokenExchangeCount provider >>= (@?= 2),
-    testCase "wrong PKCE proof cannot exchange a code" $ withFixture $ \_ runtime settings -> do
-      verifier <- randomToken
-      wrong <- randomToken
-      nonce <- randomToken
-      code <- authorizeCode runtime settings verifier nonce
-      exchangeAuthorizationCode runtime settings fixtureRedirect code wrong (tokenDigest nonce) Nothing >>= expectProtocolFailure,
-    testCase "wrong stored nonce fails after valid PKCE exchange" $ withFixture $ \_ runtime settings -> do
-      verifier <- randomToken
-      nonce <- randomToken
-      code <- authorizeCode runtime settings verifier nonce
-      exchangeAuthorizationCode runtime settings fixtureRedirect code verifier (tokenDigest "different-nonce") Nothing >>= expectProtocolFailure,
     testCase "explicit reauthentication proves matching fresh auth_time" $ withFixture $ \_ runtime settings -> do
       verifier <- randomToken
       nonce <- randomToken

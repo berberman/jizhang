@@ -10,6 +10,8 @@ module Jizhang.API.Types
     module Jizhang.API.Types.Group,
     module Jizhang.API.Types.Money,
     module Jizhang.API.Types.Receipt,
+    module Jizhang.API.Types.ReceiptAI,
+    module Jizhang.API.Types.ReceiptSummary,
     module Jizhang.API.Types.Record,
     module Jizhang.API.Types.Report,
     module Jizhang.API.Types.Statistics,
@@ -23,6 +25,8 @@ import Jizhang.API.Types.Common
 import Jizhang.API.Types.Group
 import Jizhang.API.Types.Money
 import Jizhang.API.Types.Receipt
+import Jizhang.API.Types.ReceiptAI
+import Jizhang.API.Types.ReceiptSummary
 import Jizhang.API.Types.Record
 import Jizhang.API.Types.Report
 import Jizhang.API.Types.Statistics

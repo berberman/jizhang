@@ -9,8 +9,8 @@ behavior, not a privacy policy or a promise on behalf of every installation.
 PostgreSQL stores account profiles, password hashes, authentication/session state,
 groups, memberships, and shared financial records. Records include titles, notes,
 dates, amounts, currencies, splits, and saved exchange-rate provenance. Receipt
-bundles contain expenses, not uploaded images. Submitted CSV text reaches the
-backend for import.
+bundles can include one normalized JPEG image and its original extraction and
+corrected review. Submitted CSV text reaches the backend for import.
 
 Group members can see their authorized shared ledger, including historical
 participant references. Ordinary shared identities do not expose account email or
@@ -24,6 +24,13 @@ state in the originating tab's `sessionStorage`. The admin console uses
 same-origin authentication and anti-forgery cookies. See
 [Authentication](authentication.md) for session and sign-out behavior.
 
+Receipt image/evidence drafts stay in browser memory, not local/session storage.
+They are persisted only with a successful receipt save. Source retrieval requires
+the same group membership or separate administrator authority as the receipt and
+uses non-cacheable responses. Receipt/group deletion removes the source image;
+usage metadata remains independent of source deletion and backups can retain
+older data.
+
 ## External requests
 
 - Configured OIDC sign-in sends authentication traffic to the selected provider.
@@ -32,6 +39,15 @@ same-origin authentication and anti-forgery cookies. See
 - Reference-rate lookup sends a currency pair from the backend to Frankfurter at
   `api.frankfurter.dev` when a provider lookup is needed. It does not send account
   identities, amounts, group details, or record notes.
+- Explicit receipt extraction sends the displayed normalized image and generic
+  extraction instructions from the backend to OpenAI at `api.openai.com`. No
+  application participant IDs or group IDs are part of the model request. Images
+  may contain personal information, so review them before sending. The request
+  uses `store=false`; provider retention still follows its API terms. Extraction
+  requires administrator enablement and a configured server credential.
+  Usage storage contains status, model, hashes, reported token counts, provider
+  time, and estimated cost, not source images, prompts, full responses, raw errors,
+  keys, or reasoning. A saved receipt separately retains the reviewed evidence.
 - Browser asset delivery depends on the web build and deployment. Review its
   network traffic, including Flutter engine/font resources, and any hosting,
   reverse-proxy, analytics, or monitoring services you add. Self-hosting the API

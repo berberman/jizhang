@@ -8,6 +8,7 @@ module Jizhang.Config
     EnvironmentAuthentication (..),
     parseEnvironmentAuthentication,
     parseRequestProtectionConfig,
+    parseReceiptAIConfig,
   )
 where
 
@@ -20,6 +21,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Jizhang.API.Types.Admin (AdminBootstrap (..))
+import Jizhang.ReceiptAI.Runtime (parseReceiptAIConfig)
 import Jizhang.RequestProtection
 import Text.Read (readMaybe)
 import Servant.Auth.Server (JWTSettings, defaultJWTSettings, fromSecret)

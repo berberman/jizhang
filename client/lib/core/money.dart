@@ -88,6 +88,12 @@ BigInt parsePercentage(String text) {
   return value;
 }
 
+class MoneyKeyValue {
+  const MoneyKeyValue(this.key, this.value);
+  final String key;
+  final BigInt value;
+}
+
 class MoneySplitValue {
   const MoneySplitValue(this.userId, this.value);
   final String userId;
@@ -169,13 +175,36 @@ List<MoneySplitValue> apportion(BigInt amountMinor, List<MoneySplitValue> rows) 
     throw const FormatException('Allocation amount must not be negative');
   }
   _checkRows(rows);
+  final allocated = apportionByKey(amountMinor, [
+    for (final row in rows) MoneyKeyValue(row.userId.toLowerCase(), row.value),
+  ]);
+  return [
+    for (var i = 0; i < rows.length; i++)
+      MoneySplitValue(rows[i].userId, allocated[i].value),
+  ];
+}
+
+/// Allocates by case-sensitive keys, preserving input order.
+List<MoneyKeyValue> apportionByKey(BigInt amountMinor, List<MoneyKeyValue> rows) {
+  if (amountMinor < BigInt.zero) {
+    throw const FormatException('Allocation amount must not be negative');
+  }
+  final seen = <String>{};
+  for (final row in rows) {
+    if (!seen.add(row.key)) {
+      throw const FormatException('Allocation keys must be unique');
+    }
+    if (row.value < BigInt.zero) {
+      throw const FormatException('Allocation weights must not be negative');
+    }
+  }
   final total = rows.fold(BigInt.zero, (sum, row) => sum + row.value);
   if (total == BigInt.zero) {
     throw const FormatException('Total allocation weight must be positive');
   }
   final allocated = [for (final row in rows) amountMinor * row.value ~/ total];
   final remainders = [for (final row in rows) amountMinor * row.value % total];
-  final keys = [for (final row in rows) row.userId.toLowerCase()];
+  final keys = [for (final row in rows) row.key];
   final remainderOrder = [for (var i = 0; i < rows.length; i++) i]
     ..sort((a, b) {
       final comparison = remainders[b].compareTo(remainders[a]);
@@ -192,7 +221,7 @@ List<MoneySplitValue> apportion(BigInt amountMinor, List<MoneySplitValue> rows) 
   }
   return [
     for (var i = 0; i < rows.length; i++)
-      MoneySplitValue(rows[i].userId, allocated[i]),
+      MoneyKeyValue(rows[i].key, allocated[i]),
   ];
 }
 

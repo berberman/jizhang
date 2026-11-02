@@ -66,6 +66,22 @@ void main() {
     expect(() => SpendingBucket.fromJson({...bucket, 'incomeMinor': '-1'}), throwsFormatException);
   });
 
+  test('personal expenses require nullable strict receipt summaries', () {
+    const summary = {'receiptId': 'receipt-id', 'title': 'Synthetic Market groceries'};
+    final value = <String, Object?>{'recordId': 'expense-id', 'receipt': summary,
+      'title': 'Apples', 'date': '2026-10-21', 'amountMinor': '9007199254740993'};
+    final expense = PersonalExpense.fromJson(value);
+    expect(expense.receipt!.receiptId, 'receipt-id');
+    expect(expense.receipt!.title, summary['title']);
+    expect(expense.amountMinor, BigInt.parse('9007199254740993'));
+    expect(PersonalExpense.fromJson({...value, 'receipt': null}).receipt, isNull);
+    expect(() => PersonalExpense.fromJson({...value}..remove('receipt')), throwsFormatException);
+    for (final invalid in <Object>[1, [], {'receiptId': 'receipt-id'},
+        {'receiptId': null, 'title': 'Market'}, {...summary, 'source': 'private'}]) {
+      expect(() => PersonalExpense.fromJson({...value, 'receipt': invalid}), throwsFormatException);
+    }
+  });
+
   test('chart ratios remain finite for zero and arbitrary precision totals', () {
     expect(spendingRatio(BigInt.zero, BigInt.zero), 0);
     final total = BigInt.from(10).pow(400);

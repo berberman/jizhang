@@ -20,6 +20,7 @@ import 'package:jizhang_client/features/auth/invitation_screen.dart';
 import 'package:jizhang_client/features/auth/oidc_callback_screen.dart';
 import 'package:jizhang_client/features/account/account_screen.dart';
 import 'package:jizhang_client/features/account/account_security_section.dart';
+import 'package:jizhang_client/shared/widgets.dart';
 
 const _alice = {'userId': '00000000-0000-0000-0000-000000000001', 'username': 'alice', 'displayName': 'Alice'};
 const _bob = {'userId': '00000000-0000-0000-0000-000000000002', 'username': 'bob', 'displayName': 'Bob'};
@@ -498,6 +499,12 @@ void main() {
         await _toggleDisclosure(tester, 'Password');
         await _toggleDisclosure(tester, linked ? 'Example provider' : 'SSO provider');
         await _toggleDisclosure(tester, 'Delete account');
+        if (!linked && fail) {
+          await _tapAccountAction(tester, 'Link SSO identity');
+          await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text('Cancel')));
+          await tester.pumpAndSettle();
+          expect(h.requests.where((request) => request.url.path.endsWith('/oidc/start')), isEmpty);
+        }
         await _tapAccountAction(tester, linked ? 'Verify with provider' : 'Link SSO identity');
         expect(find.text('Discard unsaved changes?'), findsOneWidget);
         await tester.tap(find.text('Discard'));
@@ -531,6 +538,17 @@ void main() {
         expect(jsonDecode(h.requests.singleWhere((r) => r.url.path.endsWith('/oidc/start')).body)['purpose'], linked ? 'reauth' : 'link');
         if (fail) {
           expect(find.text('Provider unavailable'), findsOneWidget);
+          expect(h.browser.navigations, isEmpty);
+          expect(h.session.isAuthenticated, isTrue);
+          if (!linked) {
+            await _toggleDisclosure(tester, 'SSO provider');
+            expect(find.text('Provider unavailable'), findsOneWidget);
+            await _tapAccountAction(tester, 'Back to groups');
+            expect(find.text('Discard unsaved changes?'), findsOneWidget);
+            await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text('Cancel')));
+            await tester.pumpAndSettle();
+            expect(router.routeInformationProvider.value.uri.path, '/account');
+          }
         } else {
           flow.clear();
           await tester.pumpAndSettle();
@@ -675,36 +693,6 @@ void main() {
     expect(find.textContaining(_bob['userId']!), findsOneWidget);
   });
 
-  testWidgets('linking cancellation and failed provider start preserve the profile draft and leave guard', (tester) async {
-    final authentication = _authentication();
-    final h = _Harness((request) async {
-      if (request.url.path.endsWith('/oidc/start')) return http.Response('Provider unavailable', 503);
-      return _accountResponse(request, authentication);
-    });
-    await _openAccount(tester, h);
-    await tester.enterText(_profileField('Display name'), 'Alice linking draft');
-    await _toggleDisclosure(tester, 'SSO provider');
-    await _tapAccountAction(tester, 'Link SSO identity');
-    expect(find.text('Discard unsaved changes?'), findsOneWidget);
-    await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text('Cancel')));
-    await tester.pumpAndSettle();
-    expect(h.requests.where((request) => request.url.path.endsWith('/oidc/start')), isEmpty);
-    await _tapAccountAction(tester, 'Link SSO identity');
-    await tester.tap(find.text('Discard'));
-    await tester.pumpAndSettle();
-    expect(find.text('Provider unavailable'), findsOneWidget);
-    expect(h.browser.navigations, isEmpty);
-    expect(h.session.isAuthenticated, isTrue);
-    expect(tester.widget<TextFormField>(_profileField('Display name')).controller!.text, 'Alice linking draft');
-    expect(jsonDecode(h.requests.singleWhere((request) => request.url.path.endsWith('/oidc/start')).body)['purpose'], 'link');
-    await _toggleDisclosure(tester, 'SSO provider');
-    expect(find.text('Provider unavailable'), findsOneWidget);
-    await _tapAccountAction(tester, 'Back to groups');
-    expect(find.text('Discard unsaved changes?'), findsOneWidget);
-    await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text('Cancel')));
-    await tester.pumpAndSettle();
-    expect(find.byType(AccountScreen), findsOneWidget);
-  });
 
   for (final identity in [false, true]) {
     testWidgets('successful ${identity ? 'unlink' : 'password removal'} retires the application session', (tester) async {
@@ -939,7 +927,7 @@ void main() {
     (name: '1440px', size: const Size(1440, 1000), scale: 1.0),
     (name: '320px with 200% text', size: const Size(320, 900), scale: 2.0),
   ]) {
-    testWidgets('Account disclosure insets separate headers and bodies at ${fixture.name}', (tester) async {
+    testWidgets('Account disclosures remain readable and toggle from the header edge at ${fixture.name}', (tester) async {
       await tester.binding.setSurfaceSize(fixture.size);
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final authentication = _authentication(linked: true);
@@ -956,50 +944,39 @@ void main() {
         widget is SelectableText && (widget.data?.startsWith(prefix) ?? false));
       final accountId = selectable('Account ID:');
       for (final section in [
-        (title: 'Account details', inset: 12.0, first: accountId, last: accountId),
-        (title: 'Password', inset: 12.0,
+        (title: 'Account details', first: accountId, last: accountId),
+        (title: 'Password',
           first: find.widgetWithText(OutlinedButton, 'Change password'),
           last: find.widgetWithText(TextButton, 'Remove password')),
-        (title: 'Example provider', inset: 12.0,
+        (title: 'Example provider',
           first: find.widgetWithText(OutlinedButton, 'Verify with provider'),
           last: find.widgetWithText(TextButton, 'Unlink SSO identity')),
-        (title: 'Identity details', inset: 12.0,
+        (title: 'Identity details',
           first: selectable('Issuer:'), last: selectable('Last SSO sign-in:')),
-        (title: 'Delete account', inset: 16.0,
+        (title: 'Delete account',
           first: find.text('Referenced group or expense history may prevent deletion. Ledger history is preserved.'),
           last: find.widgetWithText(OutlinedButton, 'Delete account')),
       ]) {
         final tile = _accountDisclosure(section.title);
         final header = find.descendant(of: tile, matching: find.byType(ListTile)).first;
-        final label = find.descendant(of: header, matching: find.text(section.title)).first;
-        final arrow = find.descendant(of: header, matching: find.byType(Icon)).last;
         final headerRect = tester.getRect(header);
-        final minimum = section.inset - 0.01;
-        expect(tester.getRect(label).left - headerRect.left, greaterThanOrEqualTo(minimum),
-          reason: '${section.title} title inset');
-        expect(headerRect.right - tester.getRect(arrow).right, greaterThanOrEqualTo(minimum),
-          reason: '${section.title} arrow inset');
+        final tileRect = tester.getRect(tile);
         expect(headerRect.height, greaterThanOrEqualTo(48 - 0.01));
         expect(section.first, findsOneWidget);
         expect(section.last, findsOneWidget);
-        expect(tester.getRect(section.first).top - headerRect.bottom, greaterThanOrEqualTo(minimum),
-          reason: '${section.title} header/body gap');
-        expect(tester.getRect(tile).bottom - tester.getRect(section.last).bottom, greaterThanOrEqualTo(minimum),
-          reason: '${section.title} bottom inset');
+        expect(headerRect.overlaps(tester.getRect(section.first)), isFalse);
+        expect(tester.getRect(section.last).bottom, lessThanOrEqualTo(tileRect.bottom + 0.01));
         for (final content in [section.first, section.last]) {
           final rect = tester.getRect(content);
-          expect(rect.left - headerRect.left, greaterThanOrEqualTo(minimum),
-            reason: '${section.title} body left inset');
-          expect(headerRect.right - rect.right, greaterThanOrEqualTo(minimum),
-            reason: '${section.title} body right inset');
+          expect(rect.left, greaterThanOrEqualTo(tileRect.left - 0.01));
+          expect(rect.right, lessThanOrEqualTo(tileRect.right + 0.01));
         }
       }
       final detailsHeader = find.descendant(of: _accountDisclosure('Account details'),
         matching: find.byType(ListTile)).first;
       final email = find.byWidgetPredicate((widget) => widget is InputDecorator &&
         widget.decoration.labelText == 'Email');
-      expect(tester.getRect(detailsHeader).top - tester.getRect(email).bottom,
-        greaterThanOrEqualTo(12 - 0.01));
+      expect(tester.getRect(detailsHeader).overlaps(tester.getRect(email)), isFalse);
       final accountText = tester.widget<SelectableText>(accountId).data;
       for (final expanded in [false, true]) {
         await tester.ensureVisible(detailsHeader);
@@ -1010,6 +987,7 @@ void main() {
         expect(accountId, expanded ? findsOneWidget : findsNothing);
       }
       expect(tester.widget<SelectableText>(accountId).data, accountText);
+      expect(tester.takeException(), isNull);
     });
   }
 
@@ -1094,6 +1072,11 @@ void main() {
       request.url.path.endsWith('/users/me')), hasLength(1));
     final save = h.requests.singleWhere((request) => request.method == 'PUT');
     expect(jsonDecode(save.body), {'username': 'alice_draft', 'displayName': 'Alice draft'});
+    await _tapAccountAction(tester, 'Back to groups');
+    await tester.tap(find.text('Discard'));
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/groups');
+    expect(FormNavigation.active, isNull);
   });
 
   testWidgets('security loading failure is retryable without opening methods or losing profile input', (tester) async {

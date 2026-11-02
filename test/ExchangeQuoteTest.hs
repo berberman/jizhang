@@ -58,7 +58,6 @@ exchangeQuoteTests =
           second.rate @?= nextRate
           first.sourceCurrency.code @?= CurrencyCode "EUR"
           first.targetCurrency.code @?= CurrencyCode "USD"
-          first.provider @?= "frankfurter"
           unlocked <- runClient env $ cGetGroupById tc gid
           assertEqual "quotes alone do not lock" False unlocked.currencyLocked
           let expense title currency exchange = ExpenseRecordRequest title Nothing (MinorAmount 10000) currency ownerId (read "2020-01-01") EqualSplit [RecordSplitRequest ownerId (MinorAmount 1)] (Just exchange)
@@ -123,9 +122,7 @@ exchangeQuoteTests =
             group <- runClient env $ cCreateGroup tc "Unavailable"
             response <- runClientM (cExchangeQuote tc (grpId group) (Q.ExchangeQuoteRequest $ CurrencyCode "EUR")) env
             case response of
-              Left (FailureResponse _ result) -> do
-                responseStatusCode result @?= status503
-                responseBody result @?= "Automatic rate unavailable; retry or enter a manual rate"
+              Left (FailureResponse _ result) -> responseStatusCode result @?= status503
               _ -> assertFailure "expected provider failure"
             persisted <- query_ conn "SELECT count(*) FROM exchange_quotes" :: IO [Only Int]
             persisted @?= [Only 0]

@@ -43,6 +43,7 @@ class GroupWorkspace extends StatefulWidget {
 
 class _GroupWorkspaceState extends State<GroupWorkspace> {
   final ScrollController _navigationScroll = ScrollController();
+  final ScrollController _headerScroll = ScrollController();
   final RecordChangeTracker _recordChanges = RecordChangeTracker();
   ExpenseGroup? _group;
   Object? _error;
@@ -102,6 +103,7 @@ class _GroupWorkspaceState extends State<GroupWorkspace> {
     _request++;
     widget.session.removeListener(_sessionChanged);
     _navigationScroll.dispose();
+    _headerScroll.dispose();
     super.dispose();
   }
 
@@ -149,12 +151,24 @@ class _GroupWorkspaceState extends State<GroupWorkspace> {
           backgroundColor: selected ? Theme.of(context).colorScheme.secondaryContainer : null,
         ),
         onPressed: () {
+          if (FormNavigation.active?.pending == true) return;
           final target = '/groups/${widget.groupId}/$section';
           if (widget.location.path != target) context.go(target);
         },
         icon: Icon(icon, size: 20),
         label: Text(label),
       ),
+    );
+  }
+
+  Widget _boundedHeader(Widget header, BoxConstraints workspace) {
+    if (workspace.maxWidth >= 360 && workspace.maxHeight >= 600 && MediaQuery.textScalerOf(context).scale(16) <= 16) return header;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: workspace.maxHeight * 0.45),
+      child: Scrollbar(controller: _headerScroll, thumbVisibility: true,
+        child: SingleChildScrollView(controller: _headerScroll,
+          key: PageStorageKey('group-header:$_generation:${widget.groupId}'),
+          child: header)),
     );
   }
 
@@ -174,30 +188,28 @@ class _GroupWorkspaceState extends State<GroupWorkspace> {
       updateGroup: _updateGroup,
       refreshGroup: _refreshGroup,
       recordChanges: _recordChanges,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Align(
+      child: LayoutBuilder(builder: (context, workspace) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        _boundedHeader(Align(
           alignment: Alignment.topCenter,
           child: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width >= 1100 ? 1200 : 960),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                LayoutBuilder(builder: (context, constraints) {
+                  final details = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text(group.groupName, style: Theme.of(context).textTheme.headlineSmall),
                     Text('Owner: ${userLabel(group.owner)} · ${group.members.length} active members'),
                     Text(groupCurrencyLabel(group)),
-                  ])),
-                  IconButton(
-                    tooltip: 'Switch group', onPressed: _switchGroup,
-                    icon: const Icon(Icons.swap_horiz),
-                  ),
-                  IconButton(
-                    tooltip: 'Refresh group',
-                    onPressed: _loading ? null : _refreshGroup,
-                    icon: const Icon(Icons.refresh),
-                  ),
-                ]),
+                  ]);
+                  final actions = Row(mainAxisSize: MainAxisSize.min, children: [
+                    IconButton(tooltip: 'Switch group', onPressed: _switchGroup, icon: const Icon(Icons.swap_horiz)),
+                    IconButton(tooltip: 'Refresh group', onPressed: _loading ? null : _refreshGroup, icon: const Icon(Icons.refresh)),
+                  ]);
+                  return constraints.maxWidth < 360
+                    ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [details, Align(alignment: Alignment.centerRight, child: actions)])
+                    : Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: details), actions]);
+                }),
                 if (_error != null) ...[
                   const Text('Showing previously loaded group details.'),
                   ErrorPanel(error: _error!, onRetry: _refreshGroup),
@@ -226,10 +238,10 @@ class _GroupWorkspaceState extends State<GroupWorkspace> {
               ]),
             ),
           ),
-        ),
+        ), workspace),
         if (_loading) const LinearProgressIndicator(minHeight: 2),
         Expanded(child: Semantics(container: true, child: widget.child)),
-      ]),
+      ])),
     );
   }
 }

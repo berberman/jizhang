@@ -21,6 +21,7 @@ import 'package:jizhang_client/shared/split_validation.dart';
 import 'package:jizhang_client/features/records/record_editor.dart';
 import 'package:jizhang_client/shared/entity_picker.dart';
 import 'package:jizhang_client/features/records/record_search.dart';
+import 'package:jizhang_client/features/groups/group_screen.dart';
 
 const aliceId = '00000000-0000-0000-0000-000000000001';
 const bobId = '00000000-0000-0000-0000-000000000002';
@@ -28,6 +29,15 @@ const usdJson = {'code': 'USD', 'name': 'US Dollar', 'minorUnits': 2};
 const usd = CurrencyInfo(code: 'USD', name: 'US Dollar', minorUnits: 2);
 const aliceJson = {'userId': aliceId, 'username': 'alice', 'displayName': 'Alice'};
 const bobJson = {'userId': bobId, 'username': 'bob', 'displayName': 'Bob'};
+const receiptId = '00000000-0000-0000-0000-000000000004';
+const receiptSummaryJson = {'receiptId': receiptId, 'title': 'Synthetic Market groceries'};
+
+Map<String, Object?> receiptFixture({String title = 'Synthetic Market groceries', List<Map<String, Object?>>? records}) => {
+  'receiptId': receiptId, 'groupId': 'group-id', 'uploadedBy': aliceJson, 'title': title,
+  'note': 'Separate receipt note', 'createdAt': '2026-10-21T00:00:00Z', 'source': null,
+  'records': records ?? [for (final (id, name, amount) in [('apples', 'Apples', '1000'), ('bread', 'Bread', '2000')])
+    {...expenseFixture(id: id, title: name, amount: amount), 'receipt': {'receiptId': receiptId, 'title': title}}],
+};
 
 class LogoutTestBrowser implements AuthBrowser {
   final destinations = <Uri>[];
@@ -96,6 +106,7 @@ Future<void> chooseRole(WidgetTester tester, String label, String handle) async 
 Map<String, Object?> transferFixture({String payer = aliceId, String recipient = bobId,
   String amount = '1200', String date = '2026-10-01', String? note}) => {
   'tag': 'TransferRecord', 'recordId': 'transfer-id', 'groupId': 'group-id',
+  'receipt': null,
   'title': 'Payment', 'amountMinor': amount, 'currency': usdJson,
   'note': note,
   'settlementCurrency': usdJson, 'settlementAmountMinor': amount, 'exchangeRate': null,
@@ -156,6 +167,7 @@ http.Response spendingResponse(http.Request request, String amount) {
         'netMinor': (-BigInt.parse(amount)).toString(), 'paidMinor': amount, 'shareMinor': amount}],
       'members': [{'user': aliceJson, 'paidMinor': amount, 'shareMinor': amount}],
       'topExpenses': [{'recordId': 'expense-id', 'title': 'Private expense',
+        'receipt': null,
         'date': from, 'amountMinor': amount}], 'otherExpensesMinor': '0',
     }],
   }), 200);
@@ -188,13 +200,382 @@ http.Response recordPage(List<Map<String, Object?>> rows, {int offset = 0, int t
   http.Response(jsonEncode({'items': rows, 'pageInfo': {
     'offset': offset, 'limit': 20, 'total': total,
     'hasNext': offset + 20 < total, 'hasPrev': offset > 0,
-  }}), 200);
+  }}), 200, headers: {'content-type': 'application/json; charset=utf-8'});
 
 void main() {
   setUp(() => PackageInfo.setMockInitialValues(
     appName: 'Jizhang', packageName: 'jizhang_client',
     version: '', buildNumber: '', buildSignature: '',
   ));
+  testWidgets('receipt links wrap literal titles with an accessible 48px action', (tester) async {
+    final semantics = tester.ensureSemantics();
+    try {
+      final title = List.filled(12, '会议 <b>Market</b>').join(' ');
+      var opened = 0;
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: Align(alignment: Alignment.topLeft,
+        child: SizedBox(width: 220, child: ReceiptAssociationLink(
+          receipt: ReceiptSummary(receiptId: receiptId, title: title), onPressed: () => opened++))))));
+      final button = find.byType(TextButton);
+      expect(tester.getSize(button).height, greaterThanOrEqualTo(48));
+      expect(tester.getSize(button).width, lessThanOrEqualTo(220));
+      expect(find.text('Receipt: $title'), findsOneWidget);
+      expect(find.bySemanticsLabel('Open receipt: $title'), findsOneWidget);
+      await tester.tap(button);
+      expect(opened, 1);
+      expect(tester.takeException(), isNull);
+    } finally {
+      semantics.dispose();
+    }
+  });
+
+  testWidgets('record detail receipt edit cancel save replacement and Back refresh the original record honestly', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    var title = 'Synthetic Market groceries';
+    var replaced = false;
+    final savingReceipt = Completer<void>();
+    var detailGets = 0;
+    final session = roleSession(records: (request) async {
+      if (request.url.path.endsWith('/receipt-extractions/options')) return http.Response('Unavailable', 503);
+      if (request.url.path.endsWith('/receipts/$receiptId')) {
+        if (request.method == 'PUT') {
+          title = (jsonDecode(request.body) as Map<String, dynamic>)['title'] as String;
+          replaced = true;
+          await savingReceipt.future;
+        }
+        return http.Response(jsonEncode(receiptFixture(title: title, records: replaced ? [
+          for (final (id, name, amount) in [('replacement-apples', 'Apples', '1000'), ('replacement-bread', 'Bread', '2000')])
+            {...expenseFixture(id: id, title: name, amount: amount), 'receipt': {'receiptId': receiptId, 'title': title}},
+        ] : null)), 200);
+      }
+      if (request.url.path.endsWith('/records/apples')) {
+        detailGets++;
+        if (replaced) return http.Response('Record no longer exists', 404);
+        return http.Response(jsonEncode({...expenseFixture(id: 'apples', title: 'Apples', amount: '1000'),
+          'receipt': receiptSummaryJson}), 200);
+      }
+      if (request.url.path.endsWith('/records')) return recordPage([]);
+      return null;
+    });
+    addTearDown(session.dispose);
+    final router = await openRoleEditor(tester, session, 'records/apples');
+    await tester.tap(find.widgetWithText(TextButton, 'Receipt: Synthetic Market groceries'));
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/receipts/$receiptId');
+    expect(find.byType(ReceiptAssociationLink), findsNothing);
+    await tester.tap(find.text('Edit receipt'));
+    await tester.pumpAndSettle();
+    final titleField = find.widgetWithText(TextField, 'Receipt title');
+    await tester.enterText(titleField, 'Cancelled receipt title');
+    await tester.ensureVisible(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text('Cancel')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(titleField).controller!.text, 'Cancelled receipt title');
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Discard'));
+    await tester.pumpAndSettle();
+    expect(find.text('Synthetic Market groceries'), findsOneWidget);
+    await tester.tap(find.text('Edit receipt'));
+    await tester.pumpAndSettle();
+    await tester.enterText(titleField, 'Renamed Synthetic Market groceries');
+    await tester.ensureVisible(find.text('Save receipt'));
+    final cancelBeforeSave = tester.widget<TextButton>(find.widgetWithText(TextButton, 'Cancel')).onPressed!;
+    await tester.tap(find.text('Save receipt'));
+    await tester.pump();
+    expect(tester.widget<TextButton>(find.widgetWithText(TextButton, 'Cancel')).onPressed, isNull);
+    cancelBeforeSave();
+    await tester.pump();
+    expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/receipts/$receiptId/edit');
+    final pendingLocation = router.routeInformationProvider.value.uri;
+    final recordsTab = find.widgetWithText(TextButton, 'Records');
+    await tester.ensureVisible(recordsTab);
+    await tester.tap(recordsTab);
+    expect(router.routeInformationProvider.value.uri, pendingLocation);
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri, pendingLocation);
+    expect(tester.widget<TextButton>(find.widgetWithText(TextButton, 'Cancel')).onPressed, isNull);
+    savingReceipt.complete();
+    await tester.pumpAndSettle();
+    expect(replaced, isTrue);
+    expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/receipts/$receiptId');
+    expect(find.text('Renamed Synthetic Market groceries'), findsOneWidget);
+    await tester.tap(find.text('Back'));
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/records/apples');
+    expect(detailGets, 2);
+    expect(find.textContaining('Record no longer exists'), findsOneWidget);
+    expect(find.text('Apples'), findsNothing);
+    await tester.tap(find.text('Back to records'));
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/records');
+  });
+
+  testWidgets('saved editor receipt jump keeps cancelled raw draft disables during save and discards with go', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final saving = Completer<http.Response>();
+    var mutations = 0;
+    final session = roleSession(records: (request) async {
+      if (request.method == 'PUT') { mutations++; return saving.future; }
+      if (request.url.path.endsWith('/records/apples')) return http.Response(jsonEncode({
+        ...expenseFixture(id: 'apples', title: 'Apples', amount: '1000'), 'receipt': receiptSummaryJson}), 200);
+      if (request.url.path.endsWith('/receipts/$receiptId')) return http.Response(jsonEncode(receiptFixture()), 200);
+      return null;
+    });
+    addTearDown(session.dispose);
+    final router = await openRoleEditor(tester, session, 'expenses/apples/edit');
+    final title = find.widgetWithText(TextField, 'Title');
+    final amount = find.widgetWithText(TextField, 'Amount');
+    final note = find.widgetWithText(TextField, 'Note (optional)');
+    await tester.enterText(title, '  Untouched raw title  ');
+    await tester.enterText(amount, '00010.00');
+    await tester.enterText(note, '  Exact dirty note\n会议  ');
+    final link = find.widgetWithText(TextButton, 'Receipt: Synthetic Market groceries');
+    await tester.ensureVisible(link);
+    await tester.tap(link);
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text('Cancel')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(title).controller!.text, '  Untouched raw title  ');
+    expect(tester.widget<TextField>(amount).controller!.text, '00010.00');
+    expect(tester.widget<TextField>(note).controller!.text, '  Exact dirty note\n会议  ');
+    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Save'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pump();
+    expect(mutations, 1);
+    expect(tester.widget<TextButton>(link).onPressed, isNull);
+    expect(tester.widget<TextButton>(find.widgetWithText(TextButton, 'Cancel')).onPressed, isNull);
+    saving.complete(http.Response('Temporary save failure', 503));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(title).controller!.text, '  Untouched raw title  ');
+    await tester.ensureVisible(link);
+    await tester.tap(link);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Discard'));
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/receipts/$receiptId');
+    expect(router.canPop(), isFalse);
+    expect(FormNavigation.active, isNull);
+    expect(find.byType(TextField), findsNothing);
+    expect(mutations, 1);
+  });
+
+  testWidgets('direct editor returns check pending and stale session even without a predecessor', (tester) async {
+    final session = roleSession();
+    addTearDown(session.dispose);
+    await session.login('alice', 'password');
+    final form = FormController(session);
+    addTearDown(form.dispose);
+    late BuildContext editorContext;
+    final router = GoRouter(initialLocation: '/edit', routes: [
+      GoRoute(path: '/edit', builder: (context, _) {
+        editorContext = context;
+        return Scaffold(body: FormLeaveGuard(controller: form, child: const Text('Direct editor')));
+      }),
+      GoRoute(path: '/fallback', builder: (_, _) => const Scaffold(body: Text('Fallback'))),
+    ]);
+    addTearDown(router.dispose);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    final pending = Completer<void>();
+    final save = form.save(() => pending.future);
+    await returnFromRecord(editorContext, session, fallback: '/fallback');
+    expect(router.routeInformationProvider.value.uri.path, '/edit');
+    pending.complete();
+    await save;
+    form.markDirty();
+    final returning = returnFromRecord(editorContext, session, fallback: '/fallback');
+    await tester.pumpAndSettle();
+    await session.logout();
+    await tester.tap(find.text('Discard'));
+    await tester.pumpAndSettle();
+    await returning;
+    expect(router.routeInformationProvider.value.uri.path, '/edit');
+  });
+
+  testWidgets('returning from a pushed editor restores the underlying dirty and pending guards', (tester) async {
+    final session = roleSession();
+    addTearDown(session.dispose);
+    final underlying = FormController(session)..markDirty();
+    final pushed = FormController(session);
+    addTearDown(underlying.dispose);
+    addTearDown(pushed.dispose);
+    var exited = false;
+    await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) => Scaffold(
+      body: FormLeaveGuard(controller: underlying, child: Column(children: [
+        const TextField(decoration: InputDecoration(labelText: 'Underlying draft')),
+        TextButton(onPressed: () => Navigator.of(context).push<void>(MaterialPageRoute(
+          builder: (context) => Scaffold(body: FormLeaveGuard(controller: pushed,
+            child: TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close pushed editor')))))),
+          child: const Text('Open pushed editor')),
+        TextButton(onPressed: () async {
+          if (await FormNavigation.canExit(context)) exited = true;
+        }, child: const Text('Leave underlying editor')),
+        TextButton(onPressed: () => showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(
+          title: const Text('Pending proof'), actions: [
+            TextButton(onPressed: () async {
+              if (await FormNavigation.canExit(dialogContext)) exited = true;
+            }, child: const Text('Leave from proof')),
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close proof')),
+          ])), child: const Text('Open proof dialog')),
+      ])),
+    ))));
+    await tester.enterText(find.byType(TextField), 'Exact raw draft 会议');
+    await tester.tap(find.text('Open pushed editor'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Close pushed editor'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Leave underlying editor'));
+    await tester.pumpAndSettle();
+    expect(find.text('Discard unsaved changes?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(exited, isFalse);
+    expect(tester.widget<EditableText>(find.byType(EditableText)).controller.text, 'Exact raw draft 会议');
+    final saving = Completer<void>();
+    final save = underlying.save(() => saving.future);
+    await tester.tap(find.text('Open proof dialog'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Leave from proof'));
+    await tester.pumpAndSettle();
+    expect(exited, isFalse);
+    expect(find.text('Pending proof'), findsOneWidget);
+    await tester.tap(find.text('Close proof'));
+    await tester.pumpAndSettle();
+    saving.complete();
+    await save;
+    await tester.tap(find.text('Leave underlying editor'));
+    await tester.pumpAndSettle();
+    expect(exited, isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('late saved-editor discard cannot navigate a replacement record editor', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    var receiptReads = 0;
+    final session = roleSession(records: (request) async {
+      if (request.url.path.contains('/receipts/')) { receiptReads++; return http.Response(jsonEncode(receiptFixture()), 200); }
+      if (request.url.path.contains('/records/')) return http.Response(jsonEncode({
+        ...expenseFixture(id: request.url.pathSegments.last), 'receipt': receiptSummaryJson}), 200);
+      return null;
+    });
+    addTearDown(session.dispose);
+    await session.login('alice', 'password');
+    var recordId = 'apples';
+    late StateSetter replaceEditor;
+    final group = ExpenseGroup.fromJson({'groupId': 'group-id', 'groupName': 'Trip',
+      'owner': aliceJson, 'members': [aliceJson, bobJson], 'currencyMode': 'single',
+      'defaultCurrency': usdJson, 'currencyLocked': true});
+    final changes = RecordChangeTracker();
+    final router = GoRouter(initialLocation: '/edit', routes: [
+      GoRoute(path: '/edit', builder: (_, _) => StatefulBuilder(builder: (context, update) {
+        replaceEditor = update;
+        return Scaffold(body: GroupScope(group: group, updateGroup: (_) {}, refreshGroup: () async {},
+          recordChanges: changes, child: SingleChildScrollView(child: RecordEditor(key: ValueKey(recordId),
+            repository: session.repository, session: session, groupId: group.groupId, recordId: recordId))));
+      })),
+      GoRoute(path: '/groups/:group/receipts/:receipt', builder: (_, _) => const Scaffold(body: Text('Receipt destination'))),
+    ]);
+    addTearDown(router.dispose);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Title'), 'Old dirty editor');
+    await tester.tap(find.widgetWithText(TextButton, 'Receipt: Synthetic Market groceries'));
+    await tester.pumpAndSettle();
+    replaceEditor(() => recordId = 'bread');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Discard'));
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/edit');
+    expect(receiptReads, 0);
+    expect(tester.widget<TextField>(find.widgetWithText(TextField, 'Title')).controller!.text, 'Shared meal');
+    expect(FormNavigation.active!.dirty, isFalse);
+    await tester.enterText(find.widgetWithText(TextField, 'Title'), 'New session boundary draft');
+    await tester.tap(find.widgetWithText(TextButton, 'Receipt: Synthetic Market groceries'));
+    await tester.pumpAndSettle();
+    await session.logout();
+    await tester.tap(find.text('Discard'));
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/edit');
+    expect(receiptReads, 0);
+  });
+
+  testWidgets('receipt deletion returns to Records and refreshes its originating association', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    var deleted = false;
+    var lists = 0;
+    final session = roleSession(records: (request) async {
+      if (request.url.path.endsWith('/receipts/$receiptId')) {
+        if (request.method == 'DELETE') { deleted = true; return http.Response('', 204); }
+        return http.Response(jsonEncode(receiptFixture()), 200);
+      }
+      if (request.url.path.endsWith('/records')) {
+        lists++;
+        return recordPage(deleted ? [] : [{...expenseFixture(), 'receipt': receiptSummaryJson}], total: deleted ? 0 : 1);
+      }
+      return null;
+    });
+    addTearDown(session.dispose);
+    final router = await openRoleEditor(tester, session, 'records');
+    final input = find.widgetWithText(TextField, 'Search records');
+    await tester.enterText(input, 'Unapplied receipt query');
+    await tester.tap(find.widgetWithText(TextButton, 'Receipt: Synthetic Market groceries'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete receipt'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text('Delete')));
+    await tester.pumpAndSettle();
+    expect(deleted, isTrue);
+    expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/records');
+    expect(lists, 2);
+    expect(find.byType(ReceiptAssociationLink), findsNothing);
+    expect(tester.widget<TextField>(input).controller!.text, 'Unapplied receipt query');
+  });
+
+  testWidgets('associated receipt failures retry and late receipt reads cannot cross sign-out', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    var reads = 0;
+    final delayed = Completer<http.Response>();
+    final session = roleSession(records: (request) async {
+      if (request.url.path.endsWith('/records')) return recordPage([{...expenseFixture(), 'receipt': receiptSummaryJson}]);
+      if (request.url.path.endsWith('/receipts/$receiptId')) {
+        reads++;
+        if (reads == 1) return http.Response('Receipt temporarily unavailable', 503);
+        if (reads == 2) return http.Response(jsonEncode(receiptFixture()), 200);
+        return delayed.future;
+      }
+      return null;
+    });
+    addTearDown(session.dispose);
+    final router = await openRoleEditor(tester, session, 'records');
+    final association = find.widgetWithText(TextButton, 'Receipt: Synthetic Market groceries');
+    await tester.tap(association);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Receipt temporarily unavailable'), findsOneWidget);
+    expect(find.text('Separate receipt note'), findsNothing);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Retry'));
+    await tester.pumpAndSettle();
+    expect(find.text('Separate receipt note'), findsOneWidget);
+    await tester.tap(find.text('Back'));
+    await tester.pumpAndSettle();
+    await tester.tap(association);
+    await tester.pump();
+    await session.logout();
+    await tester.pumpAndSettle();
+    delayed.complete(http.Response(jsonEncode(receiptFixture(title: 'Previous session receipt')), 200));
+    await tester.pumpAndSettle();
+    expect(reads, 3);
+    expect(find.text('Previous session receipt'), findsNothing);
+    expect(find.text('Separate receipt note'), findsNothing);
+    expect(router.routeInformationProvider.value.uri.path, isNot(startsWith('/groups/')));
+  });
+
   testWidgets('retained LoadView preserves subtree across failure and ignores superseded access responses', (tester) async {
     final key = GlobalKey<LoadViewState<String>>();
     final loads = <Completer<String>>[];
@@ -258,6 +639,7 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final requests = <Uri>[];
     final session = roleSession(records: (request) async {
+      if (request.url.path.endsWith('/receipts/$receiptId')) return http.Response(jsonEncode(receiptFixture()), 200);
       if (request.url.path.endsWith('/records/row-27')) {
         return http.Response(jsonEncode({...transferFixture(), 'recordId': 'row-27', 'title': 'Payment 27'}), 200);
       }
@@ -267,6 +649,7 @@ void main() {
         return recordPage([for (var i = offset; i < offset + 20; i++) {
           ...transferFixture(note: i.isEven ? 'A longer note\nwith another line' : null),
           'recordId': 'row-$i', 'title': 'Payment $i',
+          'receipt': i == 27 ? receiptSummaryJson : null,
         }], offset: offset, total: 40);
       }
       return null;
@@ -315,6 +698,26 @@ void main() {
     expect(requests.length, count);
     expect(sourcePosition.pixels, closeTo(offset, 1));
     expect(initiatingFocus.hasFocus, isTrue);
+    final receiptLink = find.widgetWithText(TextButton, 'Receipt: Synthetic Market groceries');
+    await tester.ensureVisible(receiptLink);
+    final receiptFocus = Focus.of(tester.element(find.descendant(of: receiptLink, matching: find.byType(Text))));
+    receiptFocus.requestFocus();
+    await tester.pump();
+    final receiptOffset = sourcePosition.pixels;
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/receipts/$receiptId');
+    expect(find.byType(ReceiptAssociationLink), findsNothing);
+    await tester.tap(find.text('Back'));
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/records');
+    expect(requests.length, count);
+    expect(requests.last.queryParameters, containsPair('offset', '20'));
+    expect(requests.last.queryParameters, containsPair('query', 'type:transfer'));
+    expect(requests.last.queryParameters, containsPair('sort', 'date'));
+    expect(tester.widget<TextField>(input).controller!.text, 'note:"unfinished');
+    expect(sourcePosition.pixels, closeTo(receiptOffset, 1));
+    expect(receiptFocus.hasFocus, isTrue);
   });
 
   testWidgets('detail deletion clamps a vanished final Records page and retains the search draft', (tester) async {
@@ -356,7 +759,7 @@ void main() {
   });
 
   testWidgets('receipt origin refreshes saved detail then receipt totals and retains failed refresh for Retry', (tester) async {
-    var record = expenseFixture();
+    var record = {...expenseFixture(), 'receipt': {'receiptId': 'receipt-id', 'title': 'Synthetic Market groceries'}};
     var deleted = false;
     var receiptGets = 0;
     var detailGets = 0;
@@ -365,7 +768,8 @@ void main() {
       if (request.method == 'DELETE') { deleted = true; return http.Response('', 204); }
       if (request.method == 'PUT') {
         final body = jsonDecode(request.body) as Map<String, dynamic>;
-        record = expenseFixture(title: body['title'] as String, amount: body['amountMinor'].toString());
+        record = {...expenseFixture(title: body['title'] as String, amount: body['amountMinor'].toString()),
+          'receipt': {'receiptId': 'receipt-id', 'title': 'Synthetic Market groceries'}};
         return http.Response(jsonEncode(record), 200);
       }
       if (request.url.path.endsWith('/records/expense-id')) {
@@ -376,7 +780,8 @@ void main() {
         receiptGets++;
         if (failReceipt) return http.Response('Receipt refresh unavailable', 500);
         return http.Response(jsonEncode({'receiptId': 'receipt-id', 'groupId': 'group-id',
-          'uploadedBy': aliceJson, 'note': 'Team dinner receipt', 'createdAt': '2026-10-01T00:00:00Z',
+          'uploadedBy': aliceJson, 'title': 'Synthetic Market groceries', 'note': 'Team dinner receipt', 'createdAt': '2026-10-01T00:00:00Z',
+          'source': null,
           'records': deleted ? [] : [record]}), 200);
       }
       return null;
@@ -384,6 +789,12 @@ void main() {
     addTearDown(session.dispose);
     final router = await openRoleEditor(tester, session, 'receipts/receipt-id');
     Future<void> openExpense() async {
+      if (find.text('Open expense').evaluate().isEmpty) {
+        final card = find.byType(ExpansionTile).first;
+        await tester.ensureVisible(card);
+        await tester.tap(find.descendant(of: card, matching: find.byType(ListTile)).first);
+        await tester.pumpAndSettle();
+      }
       await tester.ensureVisible(find.text('Open expense'));
       await tester.tap(find.text('Open expense'));
       await tester.pumpAndSettle();
@@ -593,6 +1004,7 @@ void main() {
       'paymentsSentMinor': '0', 'paymentsReceivedMinor': '2000',
       'breakdown': [for (var i = 0; i < activity; i++) {
         'recordId': '$title-$i', 'title': title == 'Alice expense' && i == 0 ? editedTitle : '$title $i', 'date': '2026-10-02',
+        'receipt': title == 'Alice expense' && i == 0 ? receiptSummaryJson : null,
         'recordType': 'expense', 'recordAmountMinor': '9000', 'amountMinor': net,
       }],
     };
@@ -609,6 +1021,7 @@ void main() {
         editedTitle = (jsonDecode(request.body) as Map<String, dynamic>)['title'] as String;
         return http.Response(jsonEncode(expenseFixture(id: 'Alice expense-0', title: editedTitle)), 200);
       }
+      if (request.url.path.endsWith('/receipts/$receiptId')) return http.Response(jsonEncode(receiptFixture()), 200);
       if (allowOpen && request.url.pathSegments.last == 'Alice expense-0') {
         return http.Response(jsonEncode(expenseFixture(id: 'Alice expense-0', title: editedTitle)), 200);
       }
@@ -671,6 +1084,27 @@ void main() {
     expect(find.text('Alice expense 0'), findsOneWidget);
     expect(tester.getTopLeft(member(aliceId)).dy, lessThan(tester.getTopLeft(member(bobId)).dy));
     expect(reports, 1);
+    final receiptLink = find.widgetWithText(TextButton, 'Receipt: Synthetic Market groceries');
+    await tester.ensureVisible(receiptLink);
+    await tester.tap(receiptLink);
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/receipts/$receiptId');
+    await tester.tap(find.text('Back'));
+    await tester.pumpAndSettle();
+    expect(reports, 1);
+    expect(find.text('Alice expense 0'), findsOneWidget);
+    expect(tester.getTopLeft(member(aliceId)).dy, lessThan(tester.getTopLeft(member(bobId)).dy));
+    await tester.binding.setSurfaceSize(const Size(390, 800));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(receiptLink);
+    await tester.tap(receiptLink);
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/receipts/$receiptId');
+    await tester.tap(find.text('Back'));
+    await tester.pumpAndSettle();
+    expect(reports, 1);
+    await tester.binding.setSurfaceSize(const Size(1440, 2200));
+    await tester.pumpAndSettle();
     final open = find.widgetWithText(TextButton, 'Open record');
     await tester.ensureVisible(open); await tester.tap(open); await tester.pumpAndSettle();
     expect(find.textContaining('Could not open Alice expense 0'), findsOneWidget);
@@ -698,6 +1132,8 @@ void main() {
     expect(tester.widget<TextButton>(open).onPressed, isNotNull);
     expect(tester.getTopLeft(member(aliceId)).dy, lessThan(tester.getTopLeft(member(bobId)).dy));
     await tester.ensureVisible(open);
+    final editOffset = position.pixels;
+    final editHorizontalOffset = horizontal.pixels;
     await tester.tap(open);
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Edit'));
@@ -715,8 +1151,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(reports, 2);
     expect(find.text('Updated balance expense'), findsOneWidget);
-    expect(position.pixels, closeTo(offset.clamp(position.minScrollExtent, position.maxScrollExtent), 1));
-    expect(horizontal.pixels, closeTo(horizontalOffset, 1));
+    expect(position.pixels, closeTo(editOffset.clamp(position.minScrollExtent, position.maxScrollExtent), 1));
+    expect(horizontal.pixels, closeTo(editHorizontalOffset, 1));
     expect(tester.getTopLeft(member(aliceId)).dy, lessThan(tester.getTopLeft(member(bobId)).dy));
   });
   for (final size in [const Size(360, 640), const Size(1440, 1000)]) {
@@ -737,7 +1173,7 @@ void main() {
       Finder dropdown(String label) => find.widgetWithText(DropdownButtonFormField<String>, label);
       Finder text(String label) => find.widgetWithText(TextField, label);
       void separated(Finder first, Finder second) {
-        expect(tester.getTopLeft(second).dy - tester.getBottomLeft(first).dy, greaterThanOrEqualTo(12));
+        expect(tester.getRect(first).overlaps(tester.getRect(second)), isFalse);
       }
       Future<void> choose(String label, String option) async {
         await tester.ensureVisible(dropdown(label));
@@ -763,7 +1199,7 @@ void main() {
         await choose('Comparison', 'Inclusive range');
         separated(dropdown('Field'), dropdown('Comparison'));
         separated(dropdown('Comparison'), text('Lower bound'));
-        expect(tester.getTopLeft(text('Upper bound')).dy - tester.getBottomLeft(text('Lower bound')).dy, greaterThanOrEqualTo(12));
+        separated(text('Lower bound'), text('Upper bound'));
         await tester.ensureVisible(text('Upper bound'));
         await tester.enterText(text('Upper bound'), field == 'amount' ? '10' : '2026-10-01');
         if (field == 'amount') separated(text('Upper bound'), dropdown('Required amount currency'));
@@ -1181,6 +1617,136 @@ void main() {
     });
   }
 
+  testWidgets('manual receipt title saves literally and lists sort by title independently of note', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    const literal = '会议 <b>Market</b>';
+    final writes = <Map<String, dynamic>>[];
+    final sorts = <String?>[];
+    Map<String, Object?>? saved;
+    final session = roleSession(records: (request) async {
+      if (request.url.path.endsWith('/receipt-extractions/options')) return http.Response(jsonEncode({
+        'available': false, 'model': 'gpt-5.4-mini-2026-03-17', 'reasoningEffort': 'low',
+        'maxImageBytes': 0, 'acceptedMediaTypes': ['image/jpeg'],
+      }), 200);
+      if ((request.method == 'POST' && request.url.path.endsWith('/receipts')) ||
+          (request.method == 'PUT' && request.url.path.endsWith('/receipts/saved-id'))) {
+        final body = jsonDecode(request.body) as Map<String, dynamic>; writes.add(body);
+        saved = {'receiptId': 'saved-id', 'groupId': 'group-id', 'uploadedBy': aliceJson,
+          'title': body['title'], 'note': body['note'], 'records': <Object?>[],
+          'createdAt': '2026-10-21T00:00:00Z', 'source': null};
+        return http.Response(jsonEncode(saved), 200, headers: {'content-type': 'application/json; charset=utf-8'});
+      }
+      if (request.url.path.endsWith('/receipts/saved-id')) {
+        return http.Response(jsonEncode(saved), 200, headers: {'content-type': 'application/json; charset=utf-8'});
+      }
+      if (request.method == 'GET' && request.url.path.endsWith('/receipts')) {
+        sorts.add(request.url.queryParameters['sort']); return recordPage([saved!]);
+      }
+      return null;
+    });
+    addTearDown(session.dispose);
+    final router = await openRoleEditor(tester, session, 'receipts/new');
+    final title = find.widgetWithText(TextField, 'Receipt title');
+    final note = find.widgetWithText(TextField, 'Receipt note (optional)');
+    expect(tester.widget<TextField>(title).controller!.text, isEmpty);
+    await tester.enterText(title, ' $literal ');
+    expect(FormNavigation.active!.dirty, isTrue);
+    await tester.enterText(note, 'Separate note');
+    await tester.tap(find.text('Save receipt')); await tester.pumpAndSettle();
+    expect(writes.single['title'], literal); expect(writes.single['note'], 'Separate note');
+    expect(writes.single.containsKey('source'), isFalse); expect(writes.single['records'], isEmpty);
+    expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/receipts/saved-id');
+    expect(find.text(literal), findsOneWidget); expect(find.text('Separate note'), findsOneWidget);
+    await tester.tap(find.text('Edit receipt')); await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(title).controller!.text, literal);
+    expect(tester.widget<TextField>(note).controller!.text, 'Separate note');
+    expect(FormNavigation.active!.dirty, isFalse);
+    await tester.enterText(title, '$literal groceries');
+    await tester.tap(find.text('Cancel')); await tester.pumpAndSettle();
+    expect(find.text('Discard unsaved changes?'), findsOneWidget);
+    await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text('Cancel')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(title).controller!.text, '$literal groceries');
+    expect(FormNavigation.active!.dirty, isTrue);
+    await tester.tap(find.text('Save receipt')); await tester.pumpAndSettle();
+    expect(writes.last['title'], '$literal groceries'); expect(writes.last['note'], 'Separate note');
+    expect(find.text('$literal groceries'), findsOneWidget);
+    await tester.tap(find.text('Back to receipts')); await tester.pumpAndSettle();
+    expect(sorts.last, 'title'); expect(find.text('$literal groceries'), findsOneWidget);
+    expect(find.text('Separate note'), findsOneWidget);
+    await tester.tap(find.widgetWithText(DropdownButtonFormField<String>, 'Sort')); await tester.pumpAndSettle();
+    await tester.tap(find.text('Title Z–A').last); await tester.pumpAndSettle();
+    expect(sorts.last, '-title');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  for (final status in [413, 503]) {
+    testWidgets('receipt title notes and expenses survive HTTP $status and retry', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1100, 1800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      const receiptTitleText = '会议 <b>Market</b>';
+      const receiptNoteText = '旅行の領収書 🧾\n会议 <b>plain</b>';
+      const expenseNoteText = 'Expense only\n昼食 café';
+      final submissions = <Map<String, dynamic>>[];
+      final failure = status == 413 ? 'Receipt is too large' : 'Receipt service unavailable';
+      final session = roleSession(records: (request) async {
+        if (request.method == 'POST' && request.url.path.endsWith('/receipts')) {
+          submissions.add(jsonDecode(request.body) as Map<String, dynamic>);
+          return http.Response(failure, status);
+        }
+        return null;
+      });
+      addTearDown(session.dispose);
+      final router = await openRoleEditor(tester, session, 'receipts/new');
+      final receiptTitle = find.widgetWithText(TextField, 'Receipt title');
+      await tester.enterText(receiptTitle, receiptTitleText);
+      final receiptNote = find.widgetWithText(TextField, 'Receipt note (optional)');
+      await tester.ensureVisible(receiptNote);
+      await tester.enterText(receiptNote, receiptNoteText);
+      await tester.ensureVisible(find.text('Add expense'));
+      await tester.tap(find.text('Add expense'));
+      await tester.pumpAndSettle();
+      final fields = find.byType(SplitFields);
+      final title = find.descendant(of: fields, matching: find.widgetWithText(TextField, 'Title'));
+      final amount = find.descendant(of: fields, matching: find.widgetWithText(TextField, 'Amount'));
+      final expenseNote = find.descendant(of: fields,
+        matching: find.widgetWithText(TextField, 'Note (optional)'));
+      await tester.ensureVisible(title);
+      await tester.enterText(title, 'Lunch');
+      await tester.ensureVisible(amount);
+      await tester.enterText(amount, '12.34');
+      await tester.ensureVisible(expenseNote);
+      await tester.enterText(expenseNote, expenseNoteText);
+
+      for (var attempt = 1; attempt <= 2; attempt++) {
+        final save = find.widgetWithText(FilledButton, 'Save receipt');
+        await tester.ensureVisible(save);
+        await tester.tap(save);
+        await tester.pumpAndSettle();
+        expect(submissions, hasLength(attempt));
+        expect(submissions.last['title'], receiptTitleText);
+        expect(tester.widget<TextField>(receiptTitle).controller!.text, receiptTitleText);
+        expect(submissions.last['note'], receiptNoteText);
+        final rows = submissions.last['records'] as List;
+        expect(rows, hasLength(1));
+        expect(rows.single['title'], 'Lunch');
+        expect(rows.single['amountMinor'], '1234');
+        expect(rows.single['note'], expenseNoteText);
+        expect(find.text(failure), findsOneWidget);
+        expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/receipts/new');
+        expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+        await tester.ensureVisible(receiptNote);
+        expect(tester.widget<TextField>(receiptNote).controller!.text, receiptNoteText);
+        await tester.ensureVisible(expenseNote);
+        expect(tester.widget<TextField>(expenseNote).controller!.text, expenseNoteText);
+        expect(tester.widget<TextField>(title).controller!.text, 'Lunch');
+        expect(tester.widget<TextField>(amount).controller!.text, '12.34');
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
   for (final removeSecond in [true, false]) {
     testWidgets(removeSecond ? 'receipt removing second preserves first draft'
         : 'receipt removing first preserves remaining draft', (tester) async {
@@ -1204,10 +1770,12 @@ void main() {
             (request.method == 'PUT' && request.url.path.endsWith('/receipts/saved-id'))) {
           submitted = jsonDecode(request.body) as Map<String, dynamic>;
           saved = {'receiptId': 'saved-id', 'groupId': 'group-id',
-            'uploadedBy': aliceJson, 'note': submitted!['note'],
+            'uploadedBy': aliceJson, 'title': submitted!['title'], 'note': submitted!['note'],
             'createdAt': '2026-01-01T00:00:00Z',
+            'source': null,
             'records': [for (final row in submitted!['records'] as List) {
               'tag': 'ExpenseRecord', 'recordId': 'record-id', 'groupId': 'group-id',
+              'receipt': {'receiptId': 'receipt-id', 'title': submitted!['title']},
               'title': row['title'], 'amountMinor': row['amountMinor'], 'paidBy': aliceJson,
               'note': row['note'],
               'currency': usdJson, 'settlementCurrency': usdJson,
@@ -1227,7 +1795,10 @@ void main() {
       await tester.pumpAndSettle();
       GoRouter.of(tester.element(find.text('Create group'))).go('/groups/group-id/receipts/new');
       await tester.pumpAndSettle();
-      await tester.enterText(find.widgetWithText(TextField, 'Note (optional)'), 'Keep this note');
+      await tester.enterText(find.widgetWithText(TextField, 'Receipt title'), 'Synthetic Market groceries');
+      final receiptNote = find.widgetWithText(TextField, 'Receipt note (optional)');
+      await tester.ensureVisible(receiptNote);
+      await tester.enterText(receiptNote, 'Keep this note');
       Future<void> add(String title, String amount) async {
         await tester.ensureVisible(find.text('Add expense'));
         await tester.tap(find.text('Add expense'));
@@ -1282,6 +1853,8 @@ void main() {
       expect(find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Survivor edited'), findsOneWidget);
       GoRouter.of(tester.element(find.text('Keep this note'))).go('/groups/group-id/receipts/saved-id/edit');
       await tester.pumpAndSettle();
+      expect(find.byType(SplitFields), findsNothing);
+      await tester.tap(find.text('Survivor edited')); await tester.pumpAndSettle();
       expect(tester.widget<SplitFields>(find.byType(SplitFields)).controller.note.text,
         '${removeSecond ? 'First' : 'Second'} child\n会议 <b>plain</b>');
       final summary = find.byWidgetPredicate((widget) => widget is Text && widget.data == 'Survivor edited');
@@ -1407,6 +1980,7 @@ void main() {
         currency['expenseCount'] = 6;
         currency['topExpenses'] = [for (var i = 0; i < 5; i++) {
           'recordId': 'ranked-${i + 1}', 'title': i == 0 ? savedTitle : 'Expense ${i + 1}',
+          'receipt': i == 0 ? receiptSummaryJson : null,
           'date': '2026-01-0${i + 1}', 'amountMinor': '${1000 - i * 100}',
         }];
         currency['otherExpensesMinor'] = '500';
@@ -1416,6 +1990,7 @@ void main() {
         opened.add(request.url.path);
         return http.Response(jsonEncode({
           'tag': 'ExpenseRecord', 'recordId': 'ranked-1', 'groupId': 'group-id',
+          'receipt': null,
           'title': savedTitle, 'note': 'Actual first ranked record', 'amountMinor': '1000',
           'currency': usdJson, 'settlementCurrency': usdJson,
           'settlementAmountMinor': '1000', 'exchangeRate': null, 'paidBy': aliceJson,
@@ -1424,6 +1999,7 @@ void main() {
           'date': '2026-01-01', 'createdAt': '2026-01-01T00:00:00Z',
         }), 200);
       }
+      if (request.url.path.endsWith('/receipts/$receiptId')) return http.Response(jsonEncode(receiptFixture()), 200);
       return null;
     });
     addTearDown(() async { await tester.pumpWidget(const SizedBox.shrink()); session.dispose(); });
@@ -1442,6 +2018,17 @@ void main() {
     expect(find.text('2026-01-01 · USD 10.00 · 22.22%'), findsOneWidget);
     expect(find.text('Other · USD 5.00 · 11.11%'), findsOneWidget);
     expect(find.text('Total allocated share: USD 45.00'), findsOneWidget);
+    final chartReceipt = find.widgetWithText(TextButton, 'Receipt: Synthetic Market groceries').first;
+    await tester.ensureVisible(chartReceipt);
+    await tester.tap(chartReceipt);
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/receipts/$receiptId');
+    await tester.tap(find.text('Back'));
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri, sourceUri);
+    expect(reports, 1);
+    expect(tester.widget<TextField>(fromDraft).controller!.text, '2025-12-15');
+    expect(tester.widget<TextField>(toDraft).controller!.text, '2026-02-14');
     final disclosure = find.widgetWithText(ExpansionTile, 'View data').last;
     await tester.ensureVisible(disclosure);
     await tester.tap(find.descendant(of: disclosure, matching: find.text('View data')));
@@ -1459,6 +2046,22 @@ void main() {
     expect(cell(6, 1), 'Total allocated share');
     expect(cell(5, 5), isEmpty);
     expect(cell(6, 5), isEmpty);
+    final tableReceipt = find.descendant(of: dataFinder, matching: find.widgetWithText(TextButton, 'Receipt: Synthetic Market groceries'));
+    expect(tableReceipt, findsOneWidget);
+    await tester.ensureVisible(tableReceipt);
+    final receiptHorizontal = Scrollable.of(tester.element(tableReceipt)).position;
+    final receiptHorizontalOffset = receiptHorizontal.pixels;
+    await tester.tap(tableReceipt);
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri.path, '/groups/group-id/receipts/$receiptId');
+    await tester.tap(find.text('Back'));
+    await tester.pumpAndSettle();
+    expect(router.routeInformationProvider.value.uri, sourceUri);
+    expect(find.byType(DataTable), findsOneWidget);
+    expect(receiptHorizontal.pixels, closeTo(receiptHorizontalOffset, 1));
+    expect(reports, 1);
+    expect(tester.widget<TextField>(fromDraft).controller!.text, '2025-12-15');
+    expect(tester.widget<TextField>(toDraft).controller!.text, '2026-02-14');
     final action = find.descendant(of: dataFinder, matching: find.widgetWithText(TextButton, 'Open expense')).first;
     await tester.binding.setSurfaceSize(const Size(800, 800));
     await tester.pumpAndSettle();
@@ -1682,50 +2285,6 @@ void main() {
     }
   });
 
-  testWidgets('profile discard cancels safely then replaces the editor', (tester) async {
-    final session = makeSession((request) async {
-      if (request.url.path.endsWith('/auth/login')) return signedIn();
-      if (request.url.path.endsWith('/users/me')) {
-        return http.Response(jsonEncode({
-          'user': aliceJson, 'email': 'alice@example.test', 'emailVerified': false,
-        }), 200);
-      }
-      if (request.url.path.endsWith('/users/me/authentication')) {
-        return http.Response(jsonEncode({
-          'hasPassword': true, 'identity': null, 'sessionMethod': 'password',
-          'authenticatedAt': '2026-10-17T12:00:00Z', 'oidcReauthenticatedAt': null,
-          'providerEnabled': false, 'canSignOutProvider': false,
-        }), 200);
-      }
-      if (request.url.path.endsWith('/users/me/groups')) {
-        return http.Response(jsonEncode({
-          'items': [],
-          'pageInfo': {'offset': 0, 'limit': 20, 'total': 0, 'hasNext': false, 'hasPrev': false},
-        }), 200);
-      }
-      return http.Response('Not found', 404);
-    });
-    addTearDown(session.dispose);
-    await session.login('alice', 'password');
-    await tester.pumpWidget(JizhangApp(repository: session.repository, session: session));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.account_circle_outlined));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextFormField).at(1), 'Alice draft');
-    await tester.tap(find.text('Back to groups'));
-    await tester.pumpAndSettle();
-    expect(find.byType(AlertDialog), findsOneWidget);
-    await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text('Cancel')));
-    await tester.pumpAndSettle();
-    expect(find.text('Alice draft'), findsOneWidget);
-    await tester.tap(find.text('Back to groups'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Discard'));
-    await tester.pumpAndSettle();
-    expect(find.text('Create group'), findsOneWidget);
-    expect(FormNavigation.active, isNull);
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
 
   test('protected 401 clears session and pending dirty form irreversibly', () async {
     final session = makeSession((request) async =>

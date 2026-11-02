@@ -35,6 +35,20 @@ List<String> receiptTotals(Receipt receipt) {
   return [for (final code in codes) currencies[code]!.format(totals[code]!)];
 }
 
+class ReceiptAssociationLink extends StatelessWidget {
+  const ReceiptAssociationLink({super.key, required this.receipt, required this.onPressed});
+  final ReceiptSummary receipt;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) => TextButton(
+    style: TextButton.styleFrom(minimumSize: const Size(48, 48), alignment: Alignment.centerLeft),
+    onPressed: onPressed,
+    child: Text('Receipt: ${receipt.title}', softWrap: true,
+      semanticsLabel: 'Open receipt: ${receipt.title}'),
+  );
+}
+
 class RecordMoney extends StatelessWidget {
   const RecordMoney({super.key, required this.record});
   final LedgerRecord record;
@@ -137,6 +151,8 @@ Future<bool> confirmAction(BuildContext context, String title, String message,
   return await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
+          scrollable: true,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
           title: Text(title),
           content: Text(message),
           actions: [
@@ -153,7 +169,7 @@ class FormNavigation {
     final form = active;
     if (form == null) return true;
     return form.canLeave(() => confirmAction(context, 'Discard unsaved changes?',
-        'Your unsaved changes will be lost.', action: 'Discard'));
+        form.discardMessage, action: 'Discard'));
   }
 }
 
@@ -167,9 +183,12 @@ class FormLeaveGuard extends StatefulWidget {
 
 class _FormLeaveGuardState extends State<FormLeaveGuard> {
   @override
-  void initState() {
-    super.initState();
-    FormNavigation.active = widget.controller;
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Dialogs keep the underlying guard; a pushed form replaces it.
+    if (ModalRoute.isCurrentOf(context) != false) {
+      FormNavigation.active = widget.controller;
+    }
   }
   @override
   void dispose() {
@@ -202,14 +221,15 @@ class PageBody extends StatelessWidget {
 }
 
 class FormSurface extends StatelessWidget {
-  const FormSurface({super.key, required this.title, required this.child});
+  const FormSurface({super.key, required this.title, required this.child, this.maxWidth = 760});
   final String title;
   final Widget child;
+  final double maxWidth;
   @override
   Widget build(BuildContext context) => Align(
     alignment: Alignment.topLeft,
     child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 760),
+      constraints: BoxConstraints(maxWidth: maxWidth),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Text(title, style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 16), child,

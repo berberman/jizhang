@@ -1,1 +1,2 @@
-void consumeRecordHistoryEntry(String destination, String dismissed, bool Function() current) {}
+void consumeRecordHistoryEntry(String destination, String dismissed, bool Function() current,
+    String Function() currentLocation) {}

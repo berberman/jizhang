@@ -1,4 +1,5 @@
 import 'money.dart';
+import 'receipt_ai_models.dart';
 
 // Immutable representations of the user API wire format.
 Map<String, Object?> _object(Object? value) {
@@ -431,14 +432,24 @@ class ExpenseGroup {
   }
 }
 
-const _recordFields = {'tag', 'recordId', 'groupId', 'title', 'note', 'amountMinor', 'currency', 'settlementAmountMinor', 'settlementCurrency', 'exchangeRate', 'date', 'createdAt'};
+class ReceiptSummary {
+  const ReceiptSummary({required this.receiptId, required this.title});
+  final String receiptId, title;
+  factory ReceiptSummary.fromJson(Object? value) {
+    final json = _fields(value, {'receiptId', 'title'});
+    return ReceiptSummary(receiptId: _string(json['receiptId']), title: _string(json['title']));
+  }
+}
+
+const _recordFields = {'tag', 'recordId', 'groupId', 'receipt', 'title', 'note', 'amountMinor', 'currency', 'settlementAmountMinor', 'settlementCurrency', 'exchangeRate', 'date', 'createdAt'};
 
 enum RecordKind { expense, income, transfer }
 
 sealed class LedgerRecord {
-  const LedgerRecord({required this.recordId, required this.groupId, required this.title, required this.note, required this.amountMinor, required this.currency, required this.settlementAmountMinor, required this.settlementCurrency, required this.exchangeRate, required this.date, required this.createdAt});
+  const LedgerRecord({required this.recordId, required this.groupId, required this.receipt, required this.title, required this.note, required this.amountMinor, required this.currency, required this.settlementAmountMinor, required this.settlementCurrency, required this.exchangeRate, required this.date, required this.createdAt});
   final String recordId;
   final String groupId;
+  final ReceiptSummary? receipt;
   final String title;
   final String? note;
   final BigInt amountMinor;
@@ -462,13 +473,13 @@ sealed class LedgerRecord {
 }
 
 sealed class SplitRecord extends LedgerRecord {
-  SplitRecord({required super.recordId, required super.groupId, required super.title, required super.note, required super.amountMinor, required super.currency, required super.settlementAmountMinor, required super.settlementCurrency, required super.exchangeRate, required super.date, required super.createdAt, required this.splitMode, required List<RecordSplit> splits}) : splits = List.unmodifiable(splits);
+  SplitRecord({required super.recordId, required super.groupId, required super.receipt, required super.title, required super.note, required super.amountMinor, required super.currency, required super.settlementAmountMinor, required super.settlementCurrency, required super.exchangeRate, required super.date, required super.createdAt, required this.splitMode, required List<RecordSplit> splits}) : splits = List.unmodifiable(splits);
   final SplitMode splitMode;
   final List<RecordSplit> splits;
 }
 
 class ExpenseRecord extends SplitRecord {
-  ExpenseRecord({required super.recordId, required super.groupId, required super.title, required super.note, required super.amountMinor, required super.currency, required super.settlementAmountMinor, required super.settlementCurrency, required super.exchangeRate, required this.paidBy, required super.date, required super.createdAt, required super.splitMode, required super.splits});
+  ExpenseRecord({required super.recordId, required super.groupId, required super.receipt, required super.title, required super.note, required super.amountMinor, required super.currency, required super.settlementAmountMinor, required super.settlementCurrency, required super.exchangeRate, required this.paidBy, required super.date, required super.createdAt, required super.splitMode, required super.splits});
   final User paidBy;
   @override
   RecordKind get kind => RecordKind.expense;
@@ -477,12 +488,12 @@ class ExpenseRecord extends SplitRecord {
   factory ExpenseRecord.fromJson(Object? value) {
     final json = _fields(value, {..._recordFields, 'paidBy', 'splitMode', 'splits'});
     if (json['tag'] != 'ExpenseRecord') throw const FormatException('Expected an expense record');
-    return ExpenseRecord(recordId: _string(json['recordId']), groupId: _string(json['groupId']), title: _string(json['title']), note: json['note'] == null ? null : _string(json['note']), amountMinor: _positiveMinor(json['amountMinor']), currency: CurrencyInfo.fromJson(json['currency']), settlementAmountMinor: _positiveMinor(json['settlementAmountMinor']), settlementCurrency: CurrencyInfo.fromJson(json['settlementCurrency']), exchangeRate: json['exchangeRate'] == null ? null : ExchangeRate.fromJson(json['exchangeRate']), paidBy: User.fromJson(json['paidBy']), date: _date(json['date']), createdAt: _instant(json['createdAt']), splitMode: _enum(json['splitMode'], SplitMode.values), splits: _list(json['splits'], RecordSplit.fromJson));
+    return ExpenseRecord(recordId: _string(json['recordId']), groupId: _string(json['groupId']), receipt: json['receipt'] == null ? null : ReceiptSummary.fromJson(json['receipt']), title: _string(json['title']), note: json['note'] == null ? null : _string(json['note']), amountMinor: _positiveMinor(json['amountMinor']), currency: CurrencyInfo.fromJson(json['currency']), settlementAmountMinor: _positiveMinor(json['settlementAmountMinor']), settlementCurrency: CurrencyInfo.fromJson(json['settlementCurrency']), exchangeRate: json['exchangeRate'] == null ? null : ExchangeRate.fromJson(json['exchangeRate']), paidBy: User.fromJson(json['paidBy']), date: _date(json['date']), createdAt: _instant(json['createdAt']), splitMode: _enum(json['splitMode'], SplitMode.values), splits: _list(json['splits'], RecordSplit.fromJson));
   }
 }
 
 class IncomeRecord extends SplitRecord {
-  IncomeRecord({required super.recordId, required super.groupId, required super.title, required super.note, required super.amountMinor, required super.currency, required super.settlementAmountMinor, required super.settlementCurrency, required super.exchangeRate, required this.receivedBy, required super.date, required super.createdAt, required super.splitMode, required super.splits});
+  IncomeRecord({required super.recordId, required super.groupId, required super.receipt, required super.title, required super.note, required super.amountMinor, required super.currency, required super.settlementAmountMinor, required super.settlementCurrency, required super.exchangeRate, required this.receivedBy, required super.date, required super.createdAt, required super.splitMode, required super.splits});
   final User receivedBy;
   @override
   RecordKind get kind => RecordKind.income;
@@ -491,12 +502,12 @@ class IncomeRecord extends SplitRecord {
   factory IncomeRecord.fromJson(Object? value) {
     final json = _fields(value, {..._recordFields, 'receivedBy', 'splitMode', 'splits'});
     if (json['tag'] != 'IncomeRecord') throw const FormatException('Expected an income record');
-    return IncomeRecord(recordId: _string(json['recordId']), groupId: _string(json['groupId']), title: _string(json['title']), note: json['note'] == null ? null : _string(json['note']), amountMinor: _positiveMinor(json['amountMinor']), currency: CurrencyInfo.fromJson(json['currency']), settlementAmountMinor: _positiveMinor(json['settlementAmountMinor']), settlementCurrency: CurrencyInfo.fromJson(json['settlementCurrency']), exchangeRate: json['exchangeRate'] == null ? null : ExchangeRate.fromJson(json['exchangeRate']), receivedBy: User.fromJson(json['receivedBy']), date: _date(json['date']), createdAt: _instant(json['createdAt']), splitMode: _enum(json['splitMode'], SplitMode.values), splits: _list(json['splits'], RecordSplit.fromJson));
+    return IncomeRecord(recordId: _string(json['recordId']), groupId: _string(json['groupId']), receipt: json['receipt'] == null ? null : ReceiptSummary.fromJson(json['receipt']), title: _string(json['title']), note: json['note'] == null ? null : _string(json['note']), amountMinor: _positiveMinor(json['amountMinor']), currency: CurrencyInfo.fromJson(json['currency']), settlementAmountMinor: _positiveMinor(json['settlementAmountMinor']), settlementCurrency: CurrencyInfo.fromJson(json['settlementCurrency']), exchangeRate: json['exchangeRate'] == null ? null : ExchangeRate.fromJson(json['exchangeRate']), receivedBy: User.fromJson(json['receivedBy']), date: _date(json['date']), createdAt: _instant(json['createdAt']), splitMode: _enum(json['splitMode'], SplitMode.values), splits: _list(json['splits'], RecordSplit.fromJson));
   }
 }
 
 class TransferRecord extends LedgerRecord {
-  const TransferRecord({required super.recordId, required super.groupId, required super.title, required super.note, required super.amountMinor, required super.currency, required super.settlementAmountMinor, required super.settlementCurrency, required super.exchangeRate, required this.paidBy, required super.date, required super.createdAt, required this.transferTo});
+  const TransferRecord({required super.recordId, required super.groupId, required super.receipt, required super.title, required super.note, required super.amountMinor, required super.currency, required super.settlementAmountMinor, required super.settlementCurrency, required super.exchangeRate, required this.paidBy, required super.date, required super.createdAt, required this.transferTo});
   final User paidBy;
   @override
   RecordKind get kind => RecordKind.transfer;
@@ -506,7 +517,7 @@ class TransferRecord extends LedgerRecord {
   factory TransferRecord.fromJson(Object? value) {
     final json = _fields(value, {..._recordFields, 'paidBy', 'transferTo'});
     if (json['tag'] != 'TransferRecord' || json['exchangeRate'] != null) throw const FormatException('Expected a payment without conversion');
-    return TransferRecord(recordId: _string(json['recordId']), groupId: _string(json['groupId']), title: _string(json['title']), note: json['note'] == null ? null : _string(json['note']), amountMinor: _positiveMinor(json['amountMinor']), currency: CurrencyInfo.fromJson(json['currency']), settlementAmountMinor: _positiveMinor(json['settlementAmountMinor']), settlementCurrency: CurrencyInfo.fromJson(json['settlementCurrency']), exchangeRate: null, paidBy: User.fromJson(json['paidBy']), date: _date(json['date']), createdAt: _instant(json['createdAt']), transferTo: User.fromJson(json['transferTo']));
+    return TransferRecord(recordId: _string(json['recordId']), groupId: _string(json['groupId']), receipt: json['receipt'] == null ? null : ReceiptSummary.fromJson(json['receipt']), title: _string(json['title']), note: json['note'] == null ? null : _string(json['note']), amountMinor: _positiveMinor(json['amountMinor']), currency: CurrencyInfo.fromJson(json['currency']), settlementAmountMinor: _positiveMinor(json['settlementAmountMinor']), settlementCurrency: CurrencyInfo.fromJson(json['settlementCurrency']), exchangeRate: null, paidBy: User.fromJson(json['paidBy']), date: _date(json['date']), createdAt: _instant(json['createdAt']), transferTo: User.fromJson(json['transferTo']));
   }
 }
 
@@ -574,31 +585,53 @@ class TransferDraft {
   Map<String, Object?> toJson() => {'amountMinor': amountMinor.toString(), 'currency': currency, 'byUserId': byUserId, 'toUserId': toUserId, 'date': date, 'note': note};
 }
 
+String normalizeReceiptTitle(String value) {
+  if (value.runes.any((codePoint) => codePoint <= 0x1f ||
+      (codePoint >= 0x7f && codePoint <= 0x9f) || codePoint == 0x2028 || codePoint == 0x2029)) {
+    throw const FormatException('Receipt title cannot contain control characters.');
+  }
+  final title = value.replaceAll(RegExp(r'^[ \u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+|[ \u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+$'), '');
+  if (title.isEmpty) throw const FormatException('Receipt title is required.');
+  if (title.runes.length > 512) throw const FormatException('Receipt title must be at most 512 characters.');
+  return title;
+}
+
 class Receipt {
-  Receipt({required this.receiptId, required this.groupId, required this.uploadedBy, required this.note, required List<LedgerRecord> records, required this.createdAt}) : records = List.unmodifiable(records);
+  Receipt({required this.receiptId, required this.groupId, required this.uploadedBy, required this.title, required this.note, required List<LedgerRecord> records, required this.createdAt, required this.source}) : records = List.unmodifiable(records);
   final String receiptId;
   final String groupId;
   final User uploadedBy;
+  final String title;
   final String note;
   final List<LedgerRecord> records;
   final DateTime createdAt;
+  final ReceiptSourceMeta? source;
   factory Receipt.fromJson(Object? value) {
-    final json = _object(value);
-    return Receipt(receiptId: _string(json['receiptId']), groupId: _string(json['groupId']), uploadedBy: User.fromJson(json['uploadedBy']), note: _string(json['note']), records: _list(json['records'], LedgerRecord.fromJson), createdAt: _instant(json['createdAt']));
+    final json = _fields(value, {'receiptId', 'groupId', 'uploadedBy', 'title', 'note', 'records', 'createdAt', 'source'});
+    return Receipt(receiptId: _string(json['receiptId']), groupId: _string(json['groupId']), uploadedBy: User.fromJson(json['uploadedBy']), title: normalizeReceiptTitle(_string(json['title'])), note: _string(json['note']), records: _list(json['records'], LedgerRecord.fromJson), createdAt: _instant(json['createdAt']), source: json['source'] == null ? null : ReceiptSourceMeta.fromJson(json['source']));
   }
 }
 
 class ReceiptDraft {
-  ReceiptDraft({required this.note, required List<SplitRecordDraft> records}) : records = List.unmodifiable(records) {
+  ReceiptDraft({required String title, required this.note, required List<SplitRecordDraft> records, this.sourceChange = const ReceiptSourceChange.keep()}) : title = normalizeReceiptTitle(title), records = List.unmodifiable(records) {
     if (records.any((record) => record.kind != RecordKind.expense)) throw ArgumentError('Receipt records must be expenses');
   }
+  final String title;
   final String note;
   final List<SplitRecordDraft> records;
+  final ReceiptSourceChange sourceChange;
   factory ReceiptDraft.fromJson(Object? value) {
-    final json = _object(value);
-    return ReceiptDraft(note: _string(json['note']), records: _list(json['records'], (value) => SplitRecordDraft.fromJson(value, kind: RecordKind.expense)));
+    final json = _fields(value, {'title', 'note', 'records'}, {'source'});
+    final sourceChange = !json.containsKey('source') ? const ReceiptSourceChange.keep() : json['source'] == null ? const ReceiptSourceChange.remove() : ReceiptSourceChange.replace(ReceiptSourceInput.fromJson(json['source']));
+    return ReceiptDraft(title: _string(json['title']), note: _string(json['note']), records: _list(json['records'], (value) => SplitRecordDraft.fromJson(value, kind: RecordKind.expense)), sourceChange: sourceChange);
   }
-  Map<String, Object?> toJson() => {'note': note, 'records': records.map((record) => record.toJson()).toList()};
+  Map<String, Object?> toJson() => {
+    'title': title,
+    'note': note,
+    'records': records.map((record) => record.toJson()).toList(),
+    if (sourceChange is RemoveReceiptSource) 'source': null,
+    if (sourceChange case ReplaceReceiptSource(:final source)) 'source': source.toJson(),
+  };
 }
 
 class GroupReport {
@@ -635,16 +668,17 @@ class Balance {
 }
 
 class BalanceBreakdown {
-  const BalanceBreakdown({required this.recordId, required this.title, required this.amountMinor, required this.date, required this.recordType, required this.recordAmountMinor});
+  const BalanceBreakdown({required this.recordId, required this.receipt, required this.title, required this.amountMinor, required this.date, required this.recordType, required this.recordAmountMinor});
   final String recordId;
+  final ReceiptSummary? receipt;
   final String title;
   final BigInt amountMinor;
   final String date;
   final RecordKind recordType;
   final BigInt recordAmountMinor;
   factory BalanceBreakdown.fromJson(Object? value) {
-    final json = _fields(value, {'recordId', 'title', 'amountMinor', 'date', 'recordType', 'recordAmountMinor'});
-    return BalanceBreakdown(recordId: _string(json['recordId']), title: _string(json['title']), amountMinor: parseMinorAmount(json['amountMinor'], allowNegative: true), date: _date(json['date']), recordType: _enum(json['recordType'], RecordKind.values), recordAmountMinor: parseMinorAmount(json['recordAmountMinor']));
+    final json = _fields(value, {'recordId', 'receipt', 'title', 'amountMinor', 'date', 'recordType', 'recordAmountMinor'});
+    return BalanceBreakdown(recordId: _string(json['recordId']), receipt: json['receipt'] == null ? null : ReceiptSummary.fromJson(json['receipt']), title: _string(json['title']), amountMinor: parseMinorAmount(json['amountMinor'], allowNegative: true), date: _date(json['date']), recordType: _enum(json['recordType'], RecordKind.values), recordAmountMinor: parseMinorAmount(json['recordAmountMinor']));
   }
 }
 
@@ -768,11 +802,12 @@ class MemberSpending {
 }
 
 class PersonalExpense {
-  const PersonalExpense({required this.recordId, required this.title, required this.date, required this.amountMinor});
+  const PersonalExpense({required this.recordId, required this.receipt, required this.title, required this.date, required this.amountMinor});
   final String recordId, title, date;
+  final ReceiptSummary? receipt;
   final BigInt amountMinor;
   factory PersonalExpense.fromJson(Object? value) {
-    final j = _fields(value, {'recordId','title','date','amountMinor'});
-    return PersonalExpense(recordId: _string(j['recordId']), title: _string(j['title']), date: _date(j['date']), amountMinor: parseMinorAmount(j['amountMinor']));
+    final j = _fields(value, {'recordId','receipt','title','date','amountMinor'});
+    return PersonalExpense(recordId: _string(j['recordId']), receipt: j['receipt'] == null ? null : ReceiptSummary.fromJson(j['receipt']), title: _string(j['title']), date: _date(j['date']), amountMinor: parseMinorAmount(j['amountMinor']));
   }
 }

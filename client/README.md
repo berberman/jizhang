@@ -86,6 +86,44 @@ deletion controls in disclosures. Profile drafts and leave protection remain
 active while these sections are opened or closed. Credential changes still
 require the existing proofs and retire application sessions.
 
+## Receipt images
+
+New receipts support photo upload and browser camera capture. Upload accepts
+JPEG, PNG, WebP, and HEIC/HEIF, then shows the normalized JPEG that will be sent
+and retained. HEIC/HEIF decoding runs locally in a dedicated worker using the
+packaged libheif-js decoder; native browser HEIF support is not required. No photo
+is uploaded on selection. Camera access starts only after **Take photo** and
+requires HTTPS or localhost plus browser permission. Unsupported or denied camera
+access retains the upload and manual-entry alternatives.
+
+Original files are limited to 20 MiB. HEIF preparation allows at most 16,384 pixels
+per edge and 64 million original pixels, with a 15-second deadline. Prepared
+images use a white background and JPEG quality 0.92, with a 2,560-pixel long edge
+and the server's configured byte cap. Invalid, oversized, unavailable-decoder, and
+timeout errors retain the previous photo and editable draft. Leaving the form
+terminates an active decoder.
+
+Deploy the complete web output, including `receipt-heif.js`, its worker, and
+`vendor/libheif/`. Decoder notices and rebuild instructions appear in
+**Open-source licenses**; the adjacent corresponding-source archive is included
+with the web distribution. See [distribution requirements](../docs/licenses.md).
+
+Selecting a photo does not call the provider. **Read receipt** is the explicit
+billable action; review and correction are local and do not call it again.
+Review starts with item expenses. Choose a tip option and the eligible items for
+each added or subtracted charge, then choose **Continue** to accept the displayed
+values. **Receipt details** offers one-expense recording, including deliberate
+bill-only recording when the actual tip is unknown. Warnings require one explicit
+acknowledgment when present. Confirm the displayed payers and splits before saving.
+
+Saving commits the source and expenses together. Failed extraction/saves retain
+the draft; leaving an in-flight extraction may still incur provider charges.
+Saved sources open only on demand and their import review is historical, not a
+rule for recalculating saved amounts or exchange rates. No source image or
+evidence draft is persisted in browser storage. See [receipt contracts](../docs/ledger.md#receipts-and-csv-imports)
+and [server configuration](../docs/configuration.md#receipt-image-extraction).
+
+
 ## Native targets
 
 Only Flutter web packaging is provided. Android, iOS, macOS, Windows and Linux

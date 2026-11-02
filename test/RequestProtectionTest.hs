@@ -190,6 +190,10 @@ bodyTest = do
         ("POST", "/admin/groups/g/import", 32),
         ("POST", "/groups/g/receipts", 32),
         ("PUT", "/admin/groups/g/receipts/r", 32),
+        ("POST", "/groups/g/receipt-extractions", 32),
+        ("POST", "/admin/groups/g/receipt-extractions", 32),
+        ("GET", "/groups/g/receipt-extractions/options", 16),
+        ("POST", "/groups/g/receipt-extractions/extra", 16),
         ("POST", "/groups/g/receipts/bulk-delete", 16),
         ("POST", "/groups/g/import/extra", 16),
         ("PUT", "/groups/g/import", 16),
@@ -372,8 +376,8 @@ financialBodyTest = do
           record.amountMinor @?= API.MinorAmount 1001
           record.note @?= Nothing
         _ -> assertFailure "CSV changed expense semantics"
-      _ <- runClient env $ cCreateReceipt user gid (API.CreateReceiptRequest (T.replicate 600 "x") [expense])
-      _ <- runClient env $ cAdminCreateReceipt admin gid (API.AdminCreateReceiptRequest owner (T.replicate 600 "x") [expense])
+      _ <- runClient env $ cCreateReceipt user gid (API.CreateReceiptRequest "Synthetic Market groceries" (T.replicate 600 "x") [expense] Nothing)
+      _ <- runClient env $ cAdminCreateReceipt admin gid (API.AdminCreateReceiptRequest owner "Synthetic Market groceries" (T.replicate 600 "x") [expense] Nothing)
       before <- query_ conn "SELECT (SELECT count(*) FROM records), (SELECT count(*) FROM record_splits), (SELECT count(*) FROM receipts)" :: IO [(Int, Int, Int)]
       before @?= [(4, 4, 2)]
       forM_ [(token, "/groups/"), (adminToken, "/admin/groups/")] $ \(actor, prefix) -> do

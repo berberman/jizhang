@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS receipts (
   id UUID PRIMARY KEY,
   group__id UUID NOT NULL REFERENCES groups (id) ON DELETE CASCADE,
   uploaded_by__id UUID NOT NULL REFERENCES users (id),
+  title TEXT NOT NULL CONSTRAINT receipts_title_valid CHECK (char_length(title) BETWEEN 1 AND 512 AND title = btrim(title) AND title !~ '[[:cntrl:]]'),
   note TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL
 );
@@ -226,4 +227,67 @@ CREATE TABLE IF NOT EXISTS record_splits (
   amount_minor BIGINT NOT NULL CHECK (amount_minor >= 0),
   settlement_amount_minor BIGINT NOT NULL CHECK (settlement_amount_minor >= 0),
   PRIMARY KEY (record__id, user__id)
+);
+
+CREATE TABLE IF NOT EXISTS receipt_ai_settings (
+  id SMALLINT PRIMARY KEY CHECK (id = 1),
+  revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0),
+  enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  api_key_encrypted TEXT NULL CHECK (api_key_encrypted <> '')
+);
+INSERT INTO receipt_ai_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS receipt_ai_usage (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  started_at TIMESTAMPTZ NOT NULL,
+  finished_at TIMESTAMPTZ NULL,
+  principal_kind TEXT NOT NULL CHECK (principal_kind IN ('user', 'admin')),
+  user__id UUID NULL REFERENCES users (id) ON DELETE SET NULL,
+  admin__id UUID NULL REFERENCES admins (id) ON DELETE SET NULL,
+  group__id UUID NULL REFERENCES groups (id) ON DELETE SET NULL,
+  requested_model TEXT NOT NULL CHECK (requested_model <> ''),
+  actual_model TEXT NULL CHECK (actual_model <> ''),
+  prompt_version TEXT NOT NULL CHECK (prompt_version <> ''),
+  prompt_sha256 TEXT NOT NULL CHECK (prompt_sha256 ~ '^[0-9a-f]{64}$'),
+  image_sha256 TEXT NOT NULL CHECK (image_sha256 ~ '^[0-9a-f]{64}$'),
+  evidence_sha256 TEXT NULL CHECK (evidence_sha256 ~ '^[0-9a-f]{64}$'),
+  settings_revision BIGINT NOT NULL CHECK (settings_revision >= 0),
+  status TEXT NOT NULL CHECK (status IN ('in_flight', 'completed', 'invalid_response', 'refused', 'http_error', 'transport_error', 'timeout', 'interrupted')),
+  provider_request_id TEXT NULL CHECK (length(provider_request_id) BETWEEN 1 AND 200 AND provider_request_id !~ '[[:cntrl:]]'),
+  http_status INTEGER NULL CHECK (http_status BETWEEN 100 AND 599),
+  input_tokens BIGINT NULL CHECK (input_tokens >= 0),
+  cached_input_tokens BIGINT NULL CHECK (cached_input_tokens >= 0),
+  output_tokens BIGINT NULL CHECK (output_tokens >= 0),
+  reasoning_tokens BIGINT NULL CHECK (reasoning_tokens >= 0),
+  duration_ms BIGINT NULL CHECK (duration_ms >= 0),
+  pricing_version TEXT NOT NULL CHECK (pricing_version <> ''),
+  input_nano_usd_per_token BIGINT NOT NULL CHECK (input_nano_usd_per_token >= 0),
+  cached_input_nano_usd_per_token BIGINT NOT NULL CHECK (cached_input_nano_usd_per_token >= 0),
+  output_nano_usd_per_token BIGINT NOT NULL CHECK (output_nano_usd_per_token >= 0),
+  estimated_cost_nano_usd BIGINT NULL CHECK (estimated_cost_nano_usd >= 0),
+  CHECK ((principal_kind = 'user' AND admin__id IS NULL) OR (principal_kind = 'admin' AND user__id IS NULL)),
+  CHECK (cached_input_tokens <= input_tokens),
+  CHECK (reasoning_tokens <= output_tokens),
+  CHECK (finished_at >= started_at),
+  CHECK ((status = 'in_flight' AND finished_at IS NULL) OR (status <> 'in_flight' AND finished_at IS NOT NULL)),
+  CHECK (status <> 'completed' OR evidence_sha256 IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS receipt_ai_usage_started_idx ON receipt_ai_usage (started_at DESC, id ASC);
+CREATE INDEX IF NOT EXISTS receipt_ai_usage_group_started_idx ON receipt_ai_usage (group__id, started_at DESC, id ASC);
+
+CREATE TABLE IF NOT EXISTS receipt_sources (
+  receipt__id UUID PRIMARY KEY REFERENCES receipts (id) ON DELETE CASCADE,
+  media_type TEXT NOT NULL CHECK (media_type = 'image/jpeg'),
+  image_bytes BYTEA NOT NULL,
+  width INTEGER NOT NULL CHECK (width BETWEEN 1 AND 8192),
+  height INTEGER NOT NULL CHECK (height BETWEEN 1 AND 8192),
+  byte_count INTEGER NOT NULL CHECK (byte_count BETWEEN 1 AND 5242880),
+  sha256 TEXT NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  extraction__id UUID NULL REFERENCES receipt_ai_usage (id) ON DELETE SET NULL,
+  evidence_json TEXT NULL CHECK (octet_length(evidence_json) <= 262144),
+  review_json TEXT NULL CHECK (octet_length(review_json) <= 262144),
+  CHECK (width::BIGINT * height::BIGINT <= 16000000),
+  CHECK (octet_length(image_bytes) = byte_count),
+  CHECK ((evidence_json IS NULL) = (review_json IS NULL)),
+  CHECK (extraction__id IS NULL OR evidence_json IS NOT NULL)
 );

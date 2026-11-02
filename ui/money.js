@@ -110,10 +110,23 @@
   function apportion(amountMinor, rows) {
     if (bigint(amountMinor) < 0n) fail('Allocation amount must not be negative');
     checkRows(rows);
+    const allocated = apportionByKey(amountMinor, rows.map((row) => ({ key: row.userId.toLowerCase(), value: row.value })));
+    return rows.map((row, index) => ({ userId: row.userId, value: allocated[index].value }));
+  }
+  function apportionByKey(amountMinor, rows) {
+    if (bigint(amountMinor) < 0n) fail('Allocation amount must not be negative');
+    if (!Array.isArray(rows)) fail('Allocation rows must be an array');
+    const keys = new Set();
+    for (const row of rows) {
+      if (typeof row.key !== 'string') fail('Allocation key must be text');
+      if (keys.has(row.key)) fail('Allocation keys must be unique');
+      keys.add(row.key);
+      if (bigint(row.value) < 0n) fail('Allocation weights must not be negative');
+    }
     const total = rows.reduce((sum, row) => sum + row.value, 0n);
     if (total === 0n) fail('Total allocation weight must be positive');
     const allocated = rows.map((row) => amountMinor * row.value / total);
-    const order = rows.map((row, index) => ({ index, key: row.userId.toLowerCase(), remainder: amountMinor * row.value % total }))
+    const order = rows.map((row, index) => ({ index, key: row.key, remainder: amountMinor * row.value % total }))
       .sort((a, b) => a.remainder !== b.remainder
         ? (a.remainder > b.remainder ? -1 : 1)
         : (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
@@ -124,7 +137,7 @@
       allocated[index] += 1n;
       remaining -= 1n;
     }
-    return rows.map((row, index) => ({ userId: row.userId, value: allocated[index] }));
+    return rows.map((row, index) => ({ key: row.key, value: allocated[index] }));
   }
   function allocateSplits(mode, amountMinor, rows) {
     validateSplits(mode, amountMinor, rows);
@@ -170,7 +183,7 @@
 
   globalThis.JizhangMoney = Object.freeze({
     maxRecordMinor, parseMinorAmount, parseMajorAmount, formatMajorAmount, formatMoney,
-    parsePercentage, validateMoneySplits, apportion, allocateSplits,
+    parsePercentage, validateMoneySplits, apportion, apportionByKey, allocateSplits,
     parseDecimalRate, convertMinorAmount, allocateExpenseSplits,
   });
 })();

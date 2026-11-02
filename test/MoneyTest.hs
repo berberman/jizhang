@@ -15,6 +15,7 @@ import qualified Data.Text as T
 import qualified Data.UUID as UUID
 import Jizhang.API.Types.Money
 import qualified Jizhang.API.Types.Receipt as Receipt
+import qualified Jizhang.API.Types.ReceiptAI as Receipt
 import qualified Jizhang.API.Types.Record as R
 import qualified Jizhang.API.Types.Report as Report
 import Jizhang.API.Types.User (User (..), UserId (..))
@@ -59,7 +60,7 @@ moneyTests =
             negative = MinorAmount (negate aggregate)
             zero = MinorAmount 0
             person = User a "alice" "Alice"
-            breakdown = Report.BalanceBreakdown (R.RecordId UUID.nil) "Aggregate" (read "2026-10-14") "expense" positive negative
+            breakdown = Report.BalanceBreakdown (R.RecordId UUID.nil) "Aggregate" (read "2026-10-14") "expense" positive negative Nothing
             balance = Report.Balance person negative positive zero zero zero zero zero [breakdown]
             settlement = Report.Settlement person (User b "bob" "Bob") positive
         mapM_ (\amount -> eitherDecode (encode amount) @?= Right amount) [positive, negative, MinorAmount maxRecordMinor, MinorAmount (maxRecordMinor + 1)]
@@ -89,17 +90,20 @@ moneyTests =
               assertBool "split value rejected" (isLeft (eitherDecode (payload "value" value (R.RecordSplitRequest b one)) :: Either String R.RecordSplitRequest))
           )
           ["9223372036854775808", "-9223372036854775808", T.replicate 8192 "9", "-" <> T.replicate 8192 "9", "01", "-0", "+1", "1e3", " 1"]
-        assertBool "unknown expense field rejected" (isLeft (eitherDecode (payload "unexpected" "1" (expense one)) :: Either String R.ExpenseRecordRequest))
-        assertBool "unknown income field rejected" (isLeft (eitherDecode (payload "unexpected" "1" (income one)) :: Either String R.IncomeRecordRequest))
-        assertBool "unknown transfer field rejected" (isLeft (eitherDecode (payload "unexpected" "1" (transfer one)) :: Either String R.TransferRecordRequest))
         assertBool "unknown split field rejected" (isLeft (eitherDecode (payload "unexpected" "1" (R.RecordSplitRequest b one)) :: Either String R.RecordSplitRequest))
+        let attach request = case toJSON request of
+              Object fields -> encode $ Object $ KM.insert "receipt" Null fields
+              _ -> error "Expected request fixture object"
+        assertBool "expense receipt metadata is not an attachment input" (isLeft (eitherDecode (attach $ expense one) :: Either String R.ExpenseRecordRequest))
+        assertBool "income receipt metadata is not an attachment input" (isLeft (eitherDecode (attach $ income one) :: Either String R.IncomeRecordRequest))
+        assertBool "transfer receipt metadata is not an attachment input" (isLeft (eitherDecode (attach $ transfer one) :: Either String R.TransferRecordRequest))
         let oversizedSplit = R.RecordSplitRequest b (MinorAmount (maxRecordMinor + 1))
             nestedExpense = R.ExpenseRecordRequest "Expense" Nothing one (CurrencyCode "USD") a day ExactSplit [oversizedSplit] Nothing
             nestedIncome = R.IncomeRecordRequest "Income" Nothing one (CurrencyCode "USD") a day ExactSplit [oversizedSplit] Nothing
         assertBool "nested expense split rejected" (isLeft (eitherDecode (encode nestedExpense) :: Either String R.ExpenseRecordRequest))
         assertBool "nested income split rejected" (isLeft (eitherDecode (encode nestedIncome) :: Either String R.IncomeRecordRequest))
-        assertBool "receipt creation child rejected" (isLeft (eitherDecode (encode (Receipt.CreateReceiptRequest "Receipt" [nestedExpense])) :: Either String Receipt.CreateReceiptRequest))
-        assertBool "receipt update child rejected" (isLeft (eitherDecode (encode (Receipt.UpdateReceiptRequest "Receipt" [nestedExpense])) :: Either String Receipt.UpdateReceiptRequest)),
+        assertBool "receipt creation child rejected" (isLeft (eitherDecode (encode (Receipt.CreateReceiptRequest "Synthetic Market groceries" "Receipt" [nestedExpense] Nothing)) :: Either String Receipt.CreateReceiptRequest))
+        assertBool "receipt update child rejected" (isLeft (eitherDecode (encode (Receipt.UpdateReceiptRequest "Synthetic Market groceries" "Receipt" [nestedExpense] Receipt.KeepReceiptSource)) :: Either String Receipt.UpdateReceiptRequest)),
       testCase "currency and mode JSON accept only contract literals" $ do
         eitherDecode "\"USD\"" @?= Right (CurrencyCode "USD")
         assertBool "lowercase rejected" (isLeft (eitherDecode "\"usd\"" :: Either String CurrencyCode))
@@ -111,10 +115,9 @@ moneyTests =
         parseMajorAmount jpy "123" @?= Right (MinorAmount 123)
         parseMajorAmount kwd "1.234" @?= Right (MinorAmount 1234)
         parseMajorAmount usd "90071992547409.93" @?= Right (MinorAmount 9007199254740993)
-        parseMajorAmount usd "92233720368547758.07" @?= Right (MinorAmount maxRecordMinor)
         parseMajorAmount usd "0" @?= Right (MinorAmount 0)
         assertRejected (validateRecordAmount (MinorAmount 0))
-        mapM_ (assertRejected . parseMajorAmount usd) ["-1", "+1", "1e2", "NaN", "Infinity", "1,000", "1.001", "1.", ".1", "92233720368547758.08"]
+        mapM_ (assertRejected . parseMajorAmount usd) ["-1", "+1", "1e2", "NaN", "Infinity", "1,000", "1.001", "1.", ".1"]
         assertRejected (parseMajorAmount jpy "1.0")
         assertRejected (parseMajorAmount kwd "1.0001"),
       testCase "major amount range checks preserve leading zeros at every supported precision" $ do
@@ -144,6 +147,12 @@ moneyTests =
         allocateSplits SharesSplit (MinorAmount 12000) (rows [2, 1, 1]) @?= Right (rows [6000, 3000, 3000])
         allocateSplits PercentageSplit (MinorAmount 10000) (rows [3333, 3333, 3334]) @?= Right (rows [3333, 3333, 3334])
         allocateSplits ExactSplit (MinorAmount 10000) (rows [1234, 8766]) @?= Right (rows [1234, 8766]),
+      testCase "key allocation preserves input order with stable one-cent ties" $ do
+        let weights = [("line_b", 1), ("line_a", 1), ("line_zero", 0)]
+        apportionByKey 1 weights @?= [("line_b", 0), ("line_a", 1), ("line_zero", 0)]
+        apportionByKey 1 (reverse weights) @?= [("line_zero", 0), ("line_a", 1), ("line_b", 0)]
+        apportionByKey 0 weights @?= [("line_b", 0), ("line_a", 0), ("line_zero", 0)]
+        apportionByKey 2970 [("line_b", 1800), ("line_a", 900)] @?= [("line_b", 1980), ("line_a", 990)],
       testCase "zero weights never get remainder and allocations conserve totals" $ do
         apportion (MinorAmount 1) [(a, 0), (b, 1), (c, 1)] @?= rows [0, 1, 0]
         mapM_

@@ -315,6 +315,7 @@ data ReceiptT f = Receipt
   { _receiptId :: C f UUID,
     _receiptGroup :: PrimaryKey GroupT f,
     _receiptUploadedBy :: PrimaryKey UserT f,
+    _receiptTitle :: C f Text,
     _receiptNote :: C f Text,
     _receiptCreatedAt :: C f UTCTime
   }
@@ -458,6 +459,79 @@ instance Table RecordSplitT where
   primaryKey :: RecordSplitT column -> PrimaryKey RecordSplitT column
   primaryKey = RecordSplitId <$> _rsRecord <*> _rsUser
 
+data ReceiptAiSettingsT f = ReceiptAiSettings
+  { _receiptAiSettingsId :: C f Int16,
+    _receiptAiSettingsRevision :: C f Int64,
+    _receiptAiSettingsEnabled :: C f Bool,
+    _receiptAiSettingsApiKeyEncrypted :: C f (Maybe Text)
+  }
+  deriving (Generic, Beamable)
+
+type ReceiptAiSettings = ReceiptAiSettingsT Identity
+
+deriving instance Eq ReceiptAiSettings
+
+instance Table ReceiptAiSettingsT where
+  data PrimaryKey ReceiptAiSettingsT f = ReceiptAiSettingsId {unReceiptAiSettingsId :: C f Int16} deriving (Generic, Beamable)
+  primaryKey = ReceiptAiSettingsId . _receiptAiSettingsId
+
+data ReceiptAiUsageT f = ReceiptAiUsage
+  { _receiptAiUsageId :: C f UUID,
+    _receiptAiUsageStartedAt :: C f UTCTime,
+    _receiptAiUsageFinishedAt :: C f (Maybe UTCTime),
+    _receiptAiUsagePrincipalKind :: C f Text,
+    _receiptAiUsageUser :: PrimaryKey UserT (Nullable f),
+    _receiptAiUsageAdmin :: PrimaryKey AdminT (Nullable f),
+    _receiptAiUsageGroup :: PrimaryKey GroupT (Nullable f),
+    _receiptAiUsageRequestedModel :: C f Text,
+    _receiptAiUsageActualModel :: C f (Maybe Text),
+    _receiptAiUsagePromptVersion :: C f Text,
+    _receiptAiUsagePromptSha256 :: C f Text,
+    _receiptAiUsageImageSha256 :: C f Text,
+    _receiptAiUsageEvidenceSha256 :: C f (Maybe Text),
+    _receiptAiUsageSettingsRevision :: C f Int64,
+    _receiptAiUsageStatus :: C f Text,
+    _receiptAiUsageProviderRequestId :: C f (Maybe Text),
+    _receiptAiUsageHttpStatus :: C f (Maybe Int32),
+    _receiptAiUsageInputTokens :: C f (Maybe Int64),
+    _receiptAiUsageCachedInputTokens :: C f (Maybe Int64),
+    _receiptAiUsageOutputTokens :: C f (Maybe Int64),
+    _receiptAiUsageReasoningTokens :: C f (Maybe Int64),
+    _receiptAiUsageDurationMs :: C f (Maybe Int64),
+    _receiptAiUsagePricingVersion :: C f Text,
+    _receiptAiUsageInputNanoUsdPerToken :: C f Int64,
+    _receiptAiUsageCachedInputNanoUsdPerToken :: C f Int64,
+    _receiptAiUsageOutputNanoUsdPerToken :: C f Int64,
+    _receiptAiUsageEstimatedCostNanoUsd :: C f (Maybe Int64)
+  }
+  deriving (Generic, Beamable)
+
+type ReceiptAiUsage = ReceiptAiUsageT Identity
+
+instance Table ReceiptAiUsageT where
+  data PrimaryKey ReceiptAiUsageT f = ReceiptAiUsageId {unReceiptAiUsageId :: C f UUID} deriving (Generic, Beamable)
+  primaryKey = ReceiptAiUsageId . _receiptAiUsageId
+
+data ReceiptSourceT f = ReceiptSource
+  { _receiptSourceReceipt :: PrimaryKey ReceiptT f,
+    _receiptSourceMediaType :: C f Text,
+    _receiptSourceImageBytes :: C f ByteString,
+    _receiptSourceWidth :: C f Int32,
+    _receiptSourceHeight :: C f Int32,
+    _receiptSourceByteCount :: C f Int32,
+    _receiptSourceSha256 :: C f Text,
+    _receiptSourceExtraction :: PrimaryKey ReceiptAiUsageT (Nullable f),
+    _receiptSourceEvidenceJson :: C f (Maybe Text),
+    _receiptSourceReviewJson :: C f (Maybe Text)
+  }
+  deriving (Generic, Beamable)
+
+type ReceiptSource = ReceiptSourceT Identity
+
+instance Table ReceiptSourceT where
+  data PrimaryKey ReceiptSourceT f = ReceiptSourceId {unReceiptSourceId :: PrimaryKey ReceiptT f} deriving (Generic, Beamable)
+  primaryKey = ReceiptSourceId . _receiptSourceReceipt
+
 -- | Table registry used by Beam queries. PrimaryKey instances describe joins;
 -- database constraints and deletion behavior come from the installed SQL schema.
 data JizhangDb f = JizhangDb
@@ -475,7 +549,10 @@ data JizhangDb f = JizhangDb
     _receipts :: f (TableEntity ReceiptT),
     _exchangeQuotes :: f (TableEntity ExchangeQuoteT),
     _records :: f (TableEntity RecordT),
-    _recordSplits :: f (TableEntity RecordSplitT)
+    _recordSplits :: f (TableEntity RecordSplitT),
+    _receiptAiSettings :: f (TableEntity ReceiptAiSettingsT),
+    _receiptAiUsage :: f (TableEntity ReceiptAiUsageT),
+    _receiptSources :: f (TableEntity ReceiptSourceT)
   }
   deriving (Generic, Database be)
 
@@ -528,7 +605,8 @@ jizhangDb =
           setEntityName "receipts"
             <> modifyTableFields
               tableModification
-                { _receiptUploadedBy = UserId "uploaded_by__id",
+                { _receiptTitle = "title",
+                  _receiptUploadedBy = UserId "uploaded_by__id",
                   _receiptCreatedAt = "created_at"
                 },
         _exchangeQuotes =
@@ -569,5 +647,61 @@ jizhangDb =
                 { _splitValue = "split_value",
                   _splitAmountMinor = "amount_minor",
                   _splitSettlementAmountMinor = "settlement_amount_minor"
+                },
+        _receiptAiSettings =
+          setEntityName "receipt_ai_settings"
+            <> modifyTableFields
+              tableModification
+                { _receiptAiSettingsId = "id",
+                  _receiptAiSettingsRevision = "revision",
+                  _receiptAiSettingsEnabled = "enabled",
+                  _receiptAiSettingsApiKeyEncrypted = "api_key_encrypted"
+                },
+        _receiptAiUsage =
+          setEntityName "receipt_ai_usage"
+            <> modifyTableFields
+              tableModification
+                { _receiptAiUsageId = "id",
+                  _receiptAiUsageStartedAt = "started_at",
+                  _receiptAiUsageFinishedAt = "finished_at",
+                  _receiptAiUsagePrincipalKind = "principal_kind",
+                  _receiptAiUsageUser = UserId "user__id",
+                  _receiptAiUsageAdmin = AdminId "admin__id",
+                  _receiptAiUsageGroup = GroupId "group__id",
+                  _receiptAiUsageRequestedModel = "requested_model",
+                  _receiptAiUsageActualModel = "actual_model",
+                  _receiptAiUsagePromptVersion = "prompt_version",
+                  _receiptAiUsagePromptSha256 = "prompt_sha256",
+                  _receiptAiUsageImageSha256 = "image_sha256",
+                  _receiptAiUsageEvidenceSha256 = "evidence_sha256",
+                  _receiptAiUsageSettingsRevision = "settings_revision",
+                  _receiptAiUsageStatus = "status",
+                  _receiptAiUsageProviderRequestId = "provider_request_id",
+                  _receiptAiUsageHttpStatus = "http_status",
+                  _receiptAiUsageInputTokens = "input_tokens",
+                  _receiptAiUsageCachedInputTokens = "cached_input_tokens",
+                  _receiptAiUsageOutputTokens = "output_tokens",
+                  _receiptAiUsageReasoningTokens = "reasoning_tokens",
+                  _receiptAiUsageDurationMs = "duration_ms",
+                  _receiptAiUsagePricingVersion = "pricing_version",
+                  _receiptAiUsageInputNanoUsdPerToken = "input_nano_usd_per_token",
+                  _receiptAiUsageCachedInputNanoUsdPerToken = "cached_input_nano_usd_per_token",
+                  _receiptAiUsageOutputNanoUsdPerToken = "output_nano_usd_per_token",
+                  _receiptAiUsageEstimatedCostNanoUsd = "estimated_cost_nano_usd"
+                },
+        _receiptSources =
+          setEntityName "receipt_sources"
+            <> modifyTableFields
+              tableModification
+                { _receiptSourceReceipt = ReceiptId "receipt__id",
+                  _receiptSourceMediaType = "media_type",
+                  _receiptSourceImageBytes = "image_bytes",
+                  _receiptSourceWidth = "width",
+                  _receiptSourceHeight = "height",
+                  _receiptSourceByteCount = "byte_count",
+                  _receiptSourceSha256 = "sha256",
+                  _receiptSourceExtraction = ReceiptAiUsageId "extraction__id",
+                  _receiptSourceEvidenceJson = "evidence_json",
+                  _receiptSourceReviewJson = "review_json"
                 }
       }

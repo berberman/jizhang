@@ -10,13 +10,14 @@ module Jizhang.API.Record (RecordAPI, recordServer) where
 
 import Control.Monad.Reader (asks)
 import Data.Coerce (coerce)
+import qualified Data.Map.Strict as M
 import Data.Text (Text)
 import Data.UUID (toText)
 import Jizhang.API.App
 import Jizhang.API.Internal.Error (fetchOrFail, fromStoredData, textToLBS)
 import Jizhang.API.Record.Projection (recordToApiRecord, recordToSplitRecord, recordToTransferRecord)
 import Jizhang.API.Record.Input (resolveExpenseRequest, resolveIncomeRequest, resolveTransferRequest, withGroupCurrencyLock)
-import Jizhang.API.Record.Service (getRecordPage)
+import Jizhang.API.Record.Service (getGroupReceiptSummaryMap, getRecordPage)
 import Jizhang.API.Common
 import Jizhang.API.Types
 import Jizhang.API.Internal.Resource (ensureGroupExists, ensureGroupMember, ensureRecordExists, getGroupUserMap)
@@ -66,7 +67,7 @@ addSplitRecord kind resolveRequest authUser (GroupId gId) req = do
   (record, ss) <- withGroupCurrencyLock group $ D.insertSplitRecord kind gId Nothing resolved
   um <- getGroupUserMap gId
   currencies <- asks appCurrencies
-  fromStoredData $ recordToSplitRecord kind currencies um record ss
+  fromStoredData $ recordToSplitRecord kind currencies um M.empty record ss
 
 addTransferRecord :: AuthUser -> GroupId -> TransferRecordRequest -> MyHandler Record
 addTransferRecord authUser (GroupId gId) req@TransferRecordRequest {..} = do
@@ -77,7 +78,7 @@ addTransferRecord authUser (GroupId gId) req@TransferRecordRequest {..} = do
   record <- withGroupCurrencyLock group $ D.insertTransferRecord gId resolved
   um <- getGroupUserMap gId
   currencies <- asks appCurrencies
-  fromStoredData $ recordToTransferRecord currencies um (coerce toUserId) record
+  fromStoredData $ recordToTransferRecord currencies um M.empty (coerce toUserId) record
 
 -- | Authorize the group before projecting persisted amounts and historical users.
 getRecord :: AuthUser -> GroupId -> RecordId -> MyHandler Record
@@ -88,7 +89,8 @@ getRecord authUser (GroupId gId) (RecordId rId) = do
   (record, ssplits) <- fetchOrFail "Record" rId $ runDB (D.getRecordWithSplits gId rId)
   um <- getGroupUserMap gId
   currencies <- asks appCurrencies
-  fromStoredData $ recordToApiRecord currencies um record ssplits
+  receipts <- getGroupReceiptSummaryMap gId
+  fromStoredData $ recordToApiRecord currencies um receipts record ssplits
 
 -- | Membership is checked here; the shared service filters and sorts before slicing.
 getRecordsInGroup :: AuthUser -> GroupId -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> MyHandler (PaginatedResponse Record)

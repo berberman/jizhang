@@ -1,5 +1,6 @@
 import 'api_client.dart';
 import 'models.dart';
+import 'receipt_ai_models.dart';
 
 class JizhangRepository {
   JizhangRepository(this.api);
@@ -197,6 +198,13 @@ class JizhangRepository {
   Future<Receipt> createReceipt(String gid, ReceiptDraft draft) => _read(api.request('POST', ['groups', gid, 'receipts'], jsonBody: draft.toJson()), Receipt.fromJson);
   Future<Receipt> updateReceipt(String gid, String id, ReceiptDraft draft) => _read(api.request('PUT', ['groups', gid, 'receipts', id], jsonBody: draft.toJson()), Receipt.fromJson);
   Future<void> deleteReceipt(String gid, String id) async { await api.request('DELETE', ['groups', gid, 'receipts', id]); }
+
+  Future<ReceiptExtractionOptions> receiptExtractionOptions(String groupId) => _read(
+    api.request('GET', ['groups', groupId, 'receipt-extractions', 'options']), ReceiptExtractionOptions.fromJson);
+  Future<ReceiptExtractionResponse> extractReceiptImage(String groupId, ReceiptImageInput image) => _read(
+    api.request('POST', ['groups', groupId, 'receipt-extractions'], jsonBody: image.toJson()), ReceiptExtractionResponse.fromJson);
+  Future<ReceiptSourceInput> getReceiptSource(String groupId, String receiptId) => _read(
+    api.request('GET', ['groups', groupId, 'receipts', receiptId, 'source']), ReceiptSourceInput.fromJson);
 
   Future<GroupReport> getReport(String gid) => _read(api.request('GET', ['groups', gid, 'report']), GroupReport.fromJson);
   Future<SpendingStatistics> getStatistics(String groupId, StatisticsQuery query) => _read(

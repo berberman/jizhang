@@ -13,7 +13,7 @@ import Jizhang.API.App
 import Jizhang.API.Group.Projection (storedGroupSettings)
 import Jizhang.API.Internal.Error (fromStoredData)
 import Jizhang.API.Internal.Resource (ensureGroupExists, ensureGroupMember, getGroupUserMap)
-import Jizhang.API.Record.Service (projectRecordRows)
+import Jizhang.API.Record.Service (getGroupReceiptSummaryMap, projectRecordRows)
 import Jizhang.API.RequestProtection (enforceExpensiveLimit)
 import Jizhang.API.Types (AuthAdmin (authAdminId), AuthUser (authUserId), GroupId (GroupId), SpendingStatistics, StatsBucket (MonthBucket), StatsDate (StatsDate), UserId (UserId))
 import qualified Jizhang.Database as D
@@ -50,5 +50,6 @@ getStatisticsForGroup gid@(GroupId uuid) defaultSubject (StatsDate lo) (StatsDat
   let selected = fromMaybe (fromMaybe (UserId $ S.unUserId $ S._groupOwner stored) defaultSubject) subject
   person <- maybe (throwError err404) pure $ M.lookup (let UserId key = selected in key) people
   rows <- runDB $ D.getSplitRecordsWithSplitsInRange uuid lo hi
-  records <- projectRecordRows people rows
+  receipts <- getGroupReceiptSummaryMap uuid
+  records <- projectRecordRows people receipts rows
   pure $ calculateSpendingStatistics gid mode base lo hi (fromMaybe MonthBucket selectedBucket) person (M.elems people) records

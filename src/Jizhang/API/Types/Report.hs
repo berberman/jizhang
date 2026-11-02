@@ -2,21 +2,25 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- | All-time balances and suggested payments, partitioned by settlement currency.
 -- JSON uses literal keys and exact integer strings; decoding does not recompute totals.
--- Every field is required and non-null; generic decoders ignore extra keys.
+-- Every key is required; receipt alone may be null. Extra keys are ignored.
 module Jizhang.API.Types.Report where
 
-import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson (FromJSON (..), ToJSON, defaultOptions, genericParseJSON, withObject)
+import qualified Data.Aeson.KeyMap as KM
 import Data.Data (Typeable)
-import Data.Swagger (ToSchema)
+import Data.Swagger (ToSchema (..))
+import qualified Data.Swagger as Swagger
 import Data.Text (Text)
 import Data.Time (Day)
 import GHC.Generics (Generic)
 import Jizhang.API.Types.Group
 import Jizhang.API.Types.Money
 import Jizhang.API.Types.Record
+import Jizhang.API.Types.ReceiptSummary (ReceiptSummary)
 import Jizhang.API.Types.User
 
 -- | Positive amounts are owed to the user; negative amounts are owed by them.
@@ -29,10 +33,22 @@ data BalanceBreakdown = BalanceBreakdown
     -- | Gross record amount in this report section's currency, counted once.
     recordAmountMinor :: !MinorAmount,
     -- | This user's net contribution from the record, after combining their roles.
-    amountMinor :: !MinorAmount
+    amountMinor :: !MinorAmount,
+    receipt :: !(Maybe ReceiptSummary)
   }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving anyclass (ToJSON, FromJSON, ToSchema)
+  deriving anyclass (ToJSON)
+
+instance FromJSON BalanceBreakdown where
+  parseJSON input = do
+    withObject "BalanceBreakdown" (\o -> if KM.member "receipt" o then pure () else fail "Missing receipt field") input
+    genericParseJSON defaultOptions input
+
+instance ToSchema BalanceBreakdown where
+  declareNamedSchema proxy = do
+    Swagger.NamedSchema responseName schema <- Swagger.genericDeclareNamedSchema Swagger.defaultSchemaOptions proxy
+    pure $ Swagger.NamedSchema responseName schema
+      { Swagger._schemaRequired = "receipt" : filter (/= "receipt") (Swagger._schemaRequired schema) }
 
 -- | One user's position in a currency. Positive totalMinor means they are owed;
 -- it equals paid - expense share - received income + entitlement + sent - received payments.

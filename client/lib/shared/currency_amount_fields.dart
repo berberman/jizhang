@@ -41,10 +41,17 @@ class _CurrencyAmountFieldsState extends State<CurrencyAmountFields> {
   }
   @override
   Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-    InputDecorator(decoration: InputDecoration(labelText: widget.label), child: Row(children: [
-      Expanded(child: Text('${widget.currency.code} — ${widget.currency.name}')),
-      if (!widget.locked) TextButton(onPressed: widget.enabled && !_loading ? _choose : null, child: Text(_loading ? 'Loading…' : 'Choose')),
-    ])),
+    InputDecorator(decoration: InputDecoration(labelText: widget.label), child: LayoutBuilder(builder: (context, constraints) =>
+      constraints.maxWidth < 200
+        ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text('${widget.currency.code} — ${widget.currency.name}'),
+            if (!widget.locked) Align(alignment: Alignment.centerRight, child: TextButton(
+              onPressed: widget.enabled && !_loading ? _choose : null, child: Text(_loading ? 'Loading…' : 'Choose'))),
+          ])
+        : Row(children: [
+            Expanded(child: Text('${widget.currency.code} — ${widget.currency.name}')),
+            if (!widget.locked) TextButton(onPressed: widget.enabled && !_loading ? _choose : null, child: Text(_loading ? 'Loading…' : 'Choose')),
+          ]))),
     if (_error != null) Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [Text(_error!), TextButton(onPressed: widget.enabled ? _choose : null, child: const Text('Retry'))]),
     if (widget.amountController != null) ...[
       const SizedBox(height: 12),

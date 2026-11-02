@@ -284,15 +284,19 @@ classifyRequest request = RequestClass auth (auth || expensive || bulk) bulk
       Just ["import"] -> method == "POST"
       Just ["receipts"] -> method == "POST"
       Just ["receipts", _rid] -> method == "PUT"
+      Just ["receipt-extractions"] -> method == "POST"
       _ -> False
     expensive = case groupPath of
       Just ["report"] -> method == "GET"
       Just ["statistics"] -> method == "GET"
       Just ["exchange-quotes"] -> method == "POST"
+      Just ["receipts", _rid, "source"] -> method == "GET"
       _ -> case path of
         ["admin", "users"] -> method == "POST"
         ["admin", "admins"] -> method == "POST"
         ["admin", "authentication"] -> method == "PUT"
+        ["admin", "receipt-ai", "settings"] -> method == "PUT"
+        ["admin", "receipt-ai", "usage"] -> method == "GET"
         ["admin", "authentication", "test"] -> method == "POST"
         _ -> False
 

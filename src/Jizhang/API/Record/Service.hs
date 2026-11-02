@@ -5,6 +5,7 @@
 module Jizhang.API.Record.Service
   ( getRecordsByGroupId,
     projectRecordRows,
+    getGroupReceiptSummaryMap,
     getRecordPage,
     addExpenseRecords,
   )
@@ -21,8 +22,8 @@ import Jizhang.API.App
 import Jizhang.API.Internal.Error (fromInput, fromStoredData)
 import Jizhang.API.Internal.Resource (ensureGroupExists, getGroupUserMap)
 import Jizhang.API.Record.Input (resolveExpenseRequest, withGroupCurrencyLock)
-import Jizhang.API.Record.Projection (recordToApiRecord, recordToSplitRecord)
-import Jizhang.API.Types (ExpenseRecordRequest, GroupId (GroupId), PaginatedResponse, Record, paginateResponse)
+import Jizhang.API.Record.Projection (ReceiptSummaryMap, recordToApiRecord, recordToSplitRecord)
+import Jizhang.API.Types (ExpenseRecordRequest, GroupId (GroupId), PaginatedResponse, ReceiptId (ReceiptId), ReceiptSummary (ReceiptSummary), Record, paginateResponse)
 import Jizhang.API.User.Projection (UserMap)
 import qualified Jizhang.Database as D
 import qualified Jizhang.Database.Schema as S
@@ -34,15 +35,21 @@ getRecordsByGroupId gId = do
   ensureGroupExists gId
   rs <- runDB $ D.getRecordsWithSplitsForGroup gId
   um <- getGroupUserMap gId
-  projectRecordRows um rs
+  receipts <- getGroupReceiptSummaryMap gId
+  projectRecordRows um receipts rs
+
+getGroupReceiptSummaryMap :: UUID -> MyHandler ReceiptSummaryMap
+getGroupReceiptSummaryMap groupId = do
+  titles <- runDB $ D.getReceiptTitlesForGroup groupId
+  pure $ M.fromList [(receiptId, ReceiptSummary (ReceiptId receiptId) title) | (receiptId, title) <- titles]
 
 -- | Collapse joined parents once and validate persisted monetary allocations.
-projectRecordRows :: UserMap -> [(S.Record, Maybe S.RecordSplit)] -> MyHandler [Record]
-projectRecordRows um rs = do
+projectRecordRows :: UserMap -> ReceiptSummaryMap -> [(S.Record, Maybe S.RecordSplit)] -> MyHandler [Record]
+projectRecordRows um receipts rs = do
   let mp = M.fromListWith (++) [(r, maybeToList s) | (r, s) <- rs]
   currencies <- asks appCurrencies
   fromStoredData $
-    traverse (\(r, ss) -> recordToApiRecord currencies um r ss) $
+    traverse (\(r, ss) -> recordToApiRecord currencies um receipts r ss) $
       sortOn (S._createdAt . fst) $
         M.toList mp
 
@@ -69,4 +76,4 @@ addExpenseRecords group requests = do
         D.insertSplitRecord D.ExpenseKind gId Nothing
   um <- getGroupUserMap gId
   currencies <- asks appCurrencies
-  fromStoredData $ traverse (uncurry (recordToSplitRecord D.ExpenseKind currencies um)) dbRecords
+  fromStoredData $ traverse (uncurry (recordToSplitRecord D.ExpenseKind currencies um M.empty)) dbRecords

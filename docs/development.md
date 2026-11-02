@@ -72,6 +72,9 @@ infers legacy record kinds nor automatically resets a database. Never reset an
 unrelated database or delete its PostgreSQL cluster. Recreate an older schema
 only after confirming that it is disposable.
 
+The current receipt schema also requires a title without a default. Startup does
+not add the title column or backfill existing receipts.
+
 Keep private data, credentials, and development notes in ignored
 `.local/private/`, not public source or examples.
 
@@ -189,6 +192,24 @@ deployment. Use only synthetic accounts and records:
 3. Reload a protected hash route. Sign-in must be required, then return to the
    intended route after authentication.
 4. Cross-check the saved values in the admin console.
+5. In both interfaces, upload a synthetic receipt image. Selection must not call
+   the provider; **Read receipt** is the explicit billable action. Correct a field,
+   choose a tip option and each charge's eligible items, then choose **Continue**.
+   Inspect the compact expenses and confirm their displayed payers and splits.
+   Save, reload, open the photo, and cross-check exact saved amounts, allocations,
+   balances, and Receipt AI usage. Use a configured key only for deliberate
+   provider checks, never automated tests.
+6. In a three-expense receipt, enter **Edit multiple**, select two expenses and
+   change payer, date, or split policy. Invalid percentages must change nothing.
+   Save and reload; the third expense, amounts, and saved exchange rates must
+   remain unchanged.
+7. Inspect receipt review, source dialogs, batch editing, and usage tables at
+   phone, tablet, and desktop widths, including 200% zoom, short windows, and
+   keyboard-only interaction. Keep final actions reachable and wide tables in
+   their labeled local scroll areas.
+8. On a camera-equipped browser over HTTPS or localhost, capture, retake, and use
+   a photo; canceling, leaving, or signing out must stop the camera stream. Also
+   check denied access and the upload/manual-entry alternatives.
 
 See [ledger behavior](ledger.md) for the financial, query, and editor contracts
 shared by both frontends, and

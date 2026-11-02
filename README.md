@@ -8,7 +8,9 @@ web client, a same-origin admin console and a Haskell Servant API backed by Post
 - Keep money exact with integer minor units, currency-aware precision and saved
   exchange-rate allocations.
 - Review member balances, suggested settlements, searchable records and dated
-  statistics. Receipts bundle expenses; CSV imports are expense-only.
+  statistics. Receipts bundle expenses with optional retained photo sources;
+  explicit image extraction produces correctable drafts, never automatic saves.
+  CSV imports remain expense-only.
 - Sign in with a local account or configured OIDC provider. Operator accounts
   are separate from ordinary users.
 

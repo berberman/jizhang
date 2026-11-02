@@ -16,13 +16,15 @@ import Database.PostgreSQL.Simple.Transaction (IsolationLevel (Serializable), Re
 import GHC.Clock (getMonotonicTimeNSec)
 import Jizhang.API
 import Jizhang.API.App (AppEnv (..))
-import Jizhang.Config (parseAdminBootstrap, parseEnvironmentAuthentication, parseJWTSettings, parseRequestProtectionConfig)
+import Jizhang.Config (parseAdminBootstrap, parseEnvironmentAuthentication, parseJWTSettings, parseRequestProtectionConfig, parseReceiptAIConfig)
 import Jizhang.Currency (loadCurrencyCatalog)
 import qualified Jizhang.Database.Auth as AuthDB
 import Jizhang.Database.Connection (closeConnectionManager, newConnectionManager, withConnection)
 import Jizhang.Database.Init (createTables)
 import Jizhang.ExchangeRate (fetchReferenceRate)
 import Jizhang.OIDC (AuthRuntime (authClock), newAuthRuntime)
+import Jizhang.ReceiptAI.Contract (loadReceiptAIContract)
+import qualified Jizhang.ReceiptAI.Provider as ReceiptAI
 import Jizhang.RequestProtection (newRequestProtection)
 import Log
 import Log.Backend.StandardOutput (withStdOutLogger)
@@ -39,6 +41,10 @@ main :: IO ()
 main =
   newManager tlsManagerSettings {managerRetryableException = const False} >>= \manager -> withStdOutLogger $ \logger -> do
     currencies <- loadCurrencyCatalog
+    receiptContract <- loadReceiptAIContract
+    openAIKey <- fmap T.pack <$> lookupEnv "OPENAI_API_KEY"
+    receiptSecretKey <- fmap T.pack <$> lookupEnv "RECEIPT_AI_SECRET_KEY"
+    receiptConfiguration <- either (fail . T.unpack) pure $ parseReceiptAIConfig openAIKey receiptSecretKey
     mCookieSecure <- lookupEnv "ADMIN_COOKIE_SECURE"
     cookieSecure <- case mCookieSecure of
       Nothing -> pure True
@@ -112,7 +118,10 @@ main =
                 appAdminCookieSecure = cookieSecure,
                 appClientOrigins = clientOrigins,
                 appCurrencies = currencies,
-                appFetchReferenceRate = fetchReferenceRate manager
+                appFetchReferenceRate = fetchReferenceRate manager,
+                appReceiptAIConfig = receiptConfiguration,
+                appReceiptAIContract = receiptContract,
+                appExtractReceipt = ReceiptAI.extractReceipt manager receiptContract
               }
           installShutdown stop = do
             _ <- installHandler sigTERM (Catch stop) Nothing

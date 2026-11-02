@@ -19,7 +19,7 @@ class ReceiptListScreen extends StatefulWidget {
 class _ReceiptListScreenState extends State<ReceiptListScreen> {
   late final PaginationController<Receipt> _list = PaginationController<Receipt>(
     load: (query) => widget.repository.listReceipts(widget.groupId, query),
-    query: const PageQuery(sort: 'note'),
+    query: const PageQuery(sort: 'title'),
   );
   late int _sessionGeneration;
   void _sessionChanged() {
@@ -49,14 +49,14 @@ class _ReceiptListScreenState extends State<ReceiptListScreen> {
           FilledButton.icon(onPressed: () => context.go('/groups/${widget.groupId}/receipts/new'),
             icon: const Icon(Icons.add), label: const Text('New receipt')),
         ]),
-        ListToolbar(query: _list.query.query, sort: _list.query.sort, label: 'note',
+        ListToolbar(query: _list.query.query, sort: _list.query.sort, label: 'Title',
           onSearch: _list.search, onSort: _list.setSort),
         if (_list.loading) const LinearProgressIndicator(),
         if (_list.error != null) ErrorPanel(error: _list.error!, onRetry: () => _list.refresh()),
         if (_list.error != null && _list.page != null) const Text('Showing previously loaded receipts.'),
         if (!_list.loading && _list.error == null && _list.page?.items.isEmpty == true)
           EmptyState(title: _list.query.query.trim().isEmpty ? 'No receipts yet' : 'No matching receipts',
-            message: _list.query.query.trim().isEmpty ? 'Create a receipt to group expenses together.' : 'Try another note or clear your search.'),
+            message: _list.query.query.trim().isEmpty ? 'Create a receipt to group expenses together.' : 'Try another title or note, or clear your search.'),
         for (final receipt in _list.page?.items ?? <Receipt>[]) _receiptRow(context, receipt),
         const SizedBox(height: 16),
         PageControls(controller: _list),
@@ -67,7 +67,7 @@ class _ReceiptListScreenState extends State<ReceiptListScreen> {
     final localCreated = receipt.createdAt.toLocal();
     final localizations = MaterialLocalizations.of(context);
     final created = '${localizations.formatCompactDate(localCreated)} ${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(localCreated))}';
-    final title = receipt.note.isEmpty ? 'Receipt (no note)' : receipt.note;
+    final title = receipt.title;
     final totals = receiptTotals(receipt);
     final amount = Text(totals.isEmpty ? 'No expenses' : 'Batch totals: ${totals.join(' · ')}', style: Theme.of(context).textTheme.titleMedium);
     return Card(clipBehavior: Clip.antiAlias, child: InkWell(
@@ -82,6 +82,7 @@ class _ReceiptListScreenState extends State<ReceiptListScreen> {
             Text(title, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8), amount,
           ],
+          if (receipt.note.isNotEmpty) ...[const SizedBox(height: 8), Text(receipt.note)],
           const SizedBox(height: 8),
           Text('Receipt · ${receipt.records.length} expenses'),
           Text('Uploaded by: ${userLabel(receipt.uploadedBy)}'),

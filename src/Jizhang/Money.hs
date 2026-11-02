@@ -13,6 +13,7 @@ module Jizhang.Money
     convertAmount,
     allocateSplits,
     apportion,
+    apportionByKey,
     allocateConvertedSplits,
   )
 where
@@ -131,22 +132,24 @@ allocateSplits mode amount@(MinorAmount total) rows = do
 -- No Shares-specific upper bound applies to these generic ratio weights.
 apportion :: MinorAmount -> [(UserId, Integer)] -> [(UserId, MinorAmount)]
 apportion (MinorAmount total) weights =
+  zipWith (\(user, _) (_, amount) -> (user, MinorAmount amount)) weights $
+    apportionByKey total [(UUID.toText uuid, weight) | (UserId uuid, weight) <- weights]
+
+-- | Preconditions: nonnegative total, unique keys, nonnegative weights and a
+-- positive weight sum. Key-ascending ties are independent of input order.
+apportionByKey :: Integer -> [(Text, Integer)] -> [(Text, Integer)]
+apportionByKey total weights =
   let denominator = sum (map snd weights)
-      divided = [(user, weight, (total * weight) `divMod` denominator) | (user, weight) <- weights]
-      -- Floors leave fewer missing units than positive weights, so each winner needs at most one.
+      divided = [(key, weight, (total * weight) `divMod` denominator) | (key, weight) <- weights]
       missing = total - sum [quotient | (_, _, (quotient, _)) <- divided]
       ranked =
-        -- Zero weights cannot receive a residual unit, even when their remainder ties at zero.
         sortOn
-          -- UUID ties keep the extra unit stable when clients reorder otherwise identical split rows.
-          (\(user, _, (_, remainder)) -> (Down remainder, uuidText user))
+          (\(key, _, (_, remainder)) -> (Down remainder, key))
           [row | row@(_, weight, _) <- divided, weight > 0]
-      winners = Set.fromList [user | (user, _, _) <- take (fromInteger missing) ranked]
-   in [ (user, MinorAmount (quotient + if Set.member user winners then 1 else 0))
-      | (user, _, (quotient, _)) <- divided
+      winners = Set.fromList [key | (key, _, _) <- take (fromInteger missing) ranked]
+   in [ (key, quotient + if Set.member key winners then 1 else 0)
+      | (key, _, (quotient, _)) <- divided
       ]
-  where
-    uuidText (UserId uuid) = UUID.toText uuid
 
 -- | Allocate each currency independently from logical submitted ratios, not the
 -- rounded source allocations (important when source minor units are coarse).

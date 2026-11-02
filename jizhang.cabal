@@ -14,7 +14,14 @@ build-type:      Simple
 extra-doc-files: CHANGELOG.md
 data-files:
   client/web/jizhang-mark.svg
+  client/web/receipt-heif-worker.js
+  client/web/receipt-heif.js
+  client/web/vendor/libheif/corresponding-source.tar.gz
+  client/web/vendor/libheif/libheif-bundle.js
+  client/web/vendor/libheif/LICENSES.txt
+  client/web/vendor/libheif/SOURCE.txt
   data/currencies.json
+  data/receipt-extraction.json
   sql/*.sql
   ui/*.css
   ui/*.html
@@ -33,6 +40,7 @@ library
     Jizhang.API.Group.Projection
     Jizhang.API.Internal.Error
     Jizhang.API.Internal.Resource
+    Jizhang.API.Receipt.Source
     Jizhang.API.Record.Input
     Jizhang.API.Record.Projection
     Jizhang.API.Record.Service
@@ -47,6 +55,9 @@ library
     Jizhang.API.Admin.Authentication
     Jizhang.API.Admin.Common
     Jizhang.API.Admin.Groups
+    Jizhang.API.Admin.ReceiptAI
+    Jizhang.API.Admin.ReceiptAI.Settings
+    Jizhang.API.Admin.ReceiptAI.Usage
     Jizhang.API.Admin.Users
     Jizhang.API.AdminAuth
     Jizhang.API.AdminUI
@@ -60,6 +71,7 @@ library
     Jizhang.API.Logout
     Jizhang.API.OIDC
     Jizhang.API.Receipt
+    Jizhang.API.ReceiptAI
     Jizhang.API.Record
     Jizhang.API.Report
     Jizhang.API.RequestProtection
@@ -73,6 +85,10 @@ library
     Jizhang.API.Types.Money
     Jizhang.API.Types.OIDC
     Jizhang.API.Types.Receipt
+    Jizhang.API.Types.ReceiptAI
+    Jizhang.API.Types.ReceiptAISettings
+    Jizhang.API.Types.ReceiptAIUsage
+    Jizhang.API.Types.ReceiptSummary
     Jizhang.API.Types.Record
     Jizhang.API.Types.Report
     Jizhang.API.Types.Statistics
@@ -92,12 +108,18 @@ library
     Jizhang.Database.Group
     Jizhang.Database.Init
     Jizhang.Database.Receipt
+    Jizhang.Database.ReceiptAI
     Jizhang.Database.Record
     Jizhang.Database.Schema
     Jizhang.Database.User
     Jizhang.ExchangeRate
     Jizhang.Money
     Jizhang.OIDC
+    Jizhang.ReceiptAI.Contract
+    Jizhang.ReceiptAI.Image
+    Jizhang.ReceiptAI.Provider
+    Jizhang.ReceiptAI.Review
+    Jizhang.ReceiptAI.Runtime
     Jizhang.RecordQuery
     Jizhang.Report.Balance
     Jizhang.Report.Markdown
@@ -106,6 +128,8 @@ library
 
   build-depends:
     , aeson
+    , attoparsec
+    , attoparsec-aeson
     , base64-bytestring
     , bcrypt
     , beam-core             ^>=0.10.4
@@ -124,6 +148,7 @@ library
     , iproute               >=1.7       && <1.8
     , jose
     , jose-jwt              ==0.10.0
+    , JuicyPixels
     , lens
     , log-base              ^>=0.12.1
     , memory
@@ -147,6 +172,7 @@ library
     , transformers
     , transformers-base
     , uuid
+    , vector
     , wai
     , wai-cors              ^>=0.2.7
     , warp
@@ -192,6 +218,14 @@ test-suite jizhang-tests
     OIDCFlowTest
     OIDCProvider
     OIDCTest
+    ReceiptAIProviderTest
+    ReceiptAISettingsTest
+    ReceiptAITest
+    ReceiptAIUsageTest
+    ReceiptImageTest
+    ReceiptImportTest
+    ReceiptSourceDatabaseTest
+    ReceiptSourceTest
     RecordQueryTest
     ReportTest
     RequestProtectionCredentialTest
@@ -206,12 +240,14 @@ test-suite jizhang-tests
     , beam-postgres
     , bytestring
     , containers
+    , crypton
     , http-client
     , http-types
     , iproute              >=1.7     && <1.8
     , jizhang
     , jose
     , jose-jwt             ==0.10.0
+    , JuicyPixels
     , log-base             ^>=0.12.1
     , network
     , network-uri
@@ -228,5 +264,6 @@ test-suite jizhang-tests
     , text
     , time
     , uuid
+    , vector
     , wai
     , warp

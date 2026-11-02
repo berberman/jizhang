@@ -7,6 +7,7 @@ import '../../core/session_controller.dart';
 import '../../shared/record_navigation.dart';
 import '../../shared/widgets.dart';
 import '../groups/group_screen.dart';
+import 'receipt_import_review.dart';
 
 class ReceiptDetailScreen extends StatefulWidget {
   const ReceiptDetailScreen({super.key, required this.repository, required this.session,
@@ -21,6 +22,16 @@ class ReceiptDetailScreen extends StatefulWidget {
 
 class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
   final _loadKey = GlobalKey<LoadViewState<Receipt>>();
+  final Map<(int, String), ExpansibleController> _expenseControllers = {};
+  final Map<(int, String), PageStorageBucket> _expenseStorage = {};
+  ExpansibleController _expenseController(String recordId) => _expenseControllers.putIfAbsent(
+    (widget.session.generation, recordId), ExpansibleController.new);
+
+  @override
+  void dispose() {
+    for (final controller in _expenseControllers.values) { controller.dispose(); }
+    super.dispose();
+  }
 
   Future<void> _delete(BuildContext context, Receipt receipt) async {
     final generation = widget.session.generation;
@@ -52,8 +63,9 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
         ),
       )));
     if (deleted == true && context.mounted && generation == widget.session.generation) {
+      GroupScope.of(context).recordChanges.markChanged();
       showSuccess(context, 'Receipt and its expenses deleted.');
-      context.go('/groups/${widget.groupId}/receipts');
+      await returnFromRecord(context, widget.session, fallback: '/groups/${widget.groupId}/receipts');
     }
   }
 
@@ -66,12 +78,12 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
       onReturn: (changed) async { if (changed) await _loadKey.currentState?.reload(); },
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Align(alignment: Alignment.centerLeft, child: TextButton.icon(
-          onPressed: () => context.go('/groups/${widget.groupId}/receipts'),
-          icon: const Icon(Icons.arrow_back), label: const Text('Back to receipts'))),
+          onPressed: () => returnFromRecord(context, widget.session, fallback: '/groups/${widget.groupId}/receipts'),
+          icon: const Icon(Icons.arrow_back), label: Text(context.canPop() ? 'Back' : 'Back to receipts'))),
         LoadView<Receipt>(key: _loadKey, retainDataOnReload: true,
           load: () => widget.repository.getReceipt(widget.groupId, widget.receiptId),
           builder: (receipt) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Text('Receipt', style: Theme.of(context).textTheme.headlineSmall),
+        Text(receipt.title, style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 16),
         Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -84,8 +96,11 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
         ))),
         const SizedBox(height: 12),
         Wrap(spacing: 8, runSpacing: 8, children: [
-          FilledButton(onPressed: () => context.go('/groups/${widget.groupId}/receipts/${widget.receiptId}/edit'), child: const Text('Edit receipt')),
+          FilledButton(onPressed: () => context.push<void>('/groups/${widget.groupId}/receipts/${widget.receiptId}/edit'), child: const Text('Edit receipt')),
           TextButton(onPressed: () => _delete(context, receipt), child: const Text('Delete receipt')),
+          if (receipt.source != null) TextButton(onPressed: () => showReceiptSource(context,
+            repository: widget.repository, session: widget.session, groupId: widget.groupId, receiptId: widget.receiptId),
+            child: const Text('View photo')),
         ]),
         const SizedBox(height: 16),
         const SectionHeading(title: 'Expenses'),
@@ -93,9 +108,16 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
         if (receipt.records.isEmpty) const EmptyState(
           title: 'No expenses', message: 'This receipt has no expenses.'),
         for (final record in receipt.records)
-          Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Text(record.title, style: Theme.of(context).textTheme.titleMedium),
+          PageStorage(key: ValueKey(record.recordId), bucket: _expenseStorage.putIfAbsent(
+            (widget.session.generation, record.recordId), PageStorageBucket.new), child: Card(child: ExpansionTile(
+            key: ValueKey((widget.session.generation, record.recordId)),
+            controller: _expenseController(record.recordId), maintainState: true,
+            tilePadding: const EdgeInsets.symmetric(horizontal: 12), childrenPadding: const EdgeInsets.all(12),
+            title: Text(record.title, style: Theme.of(context).textTheme.titleMedium),
+            subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              RecordMoney(record: record), Text('Paid by ${userLabel(record.actor)}'),
+            ]),
+            children: [Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               if (record.note?.trim().isNotEmpty ?? false) ...[
                 const SizedBox(height: 8),
                 const Text('Expense note'),
@@ -126,7 +148,7 @@ class _ReceiptDetailScreenState extends State<ReceiptDetailScreen> {
               Align(alignment: Alignment.centerLeft, child: TextButton(
                 onPressed: () => context.push<void>('/groups/${widget.groupId}/records/${record.recordId}'),
                 child: const Text('Open expense'))),
-            ],
+            ])],
           ))),
           ]),
         ),

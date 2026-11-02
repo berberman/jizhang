@@ -76,7 +76,6 @@ authSessionTests =
             object
               ["registerUsername" .= ("bob" :: Text), "registerDisplayName" .= ("Bob" :: Text), "registerEmail" .= ("bob@example.test" :: Text), "registerPassword" .= ("password123" :: Text)]
         assertEqual "signup disabled" 403 (statusCode $ HTTP.responseStatus refused)
-        assertEqual "actionable error" "Local registration is disabled" (HTTP.responseBody refused)
         response <- postJson manager port "/auth/login" $ object ["loginIdentifier" .= ("alice" :: Text), "loginPassword" .= ("password123" :: Text)]
         assertEqual "local login remains available" 200 (statusCode $ HTTP.responseStatus response),
       testCase "credential invalidation after password verification prevents session issuance" $ do

@@ -12,11 +12,15 @@ where
 import Jizhang.API.Admin.Authentication
 import Jizhang.API.Admin.Common
 import Jizhang.API.Admin.Groups
+import Jizhang.API.Admin.ReceiptAI (AdminReceiptAIAPI, adminReceiptAIServer)
 import Jizhang.API.Admin.Users
 import Jizhang.API.Common (WithPagination)
 import Jizhang.API.ExchangeRate (createAdminExchangeQuote)
 import Jizhang.API.GroupImport (CSV, CSVData)
 import Jizhang.API.Statistics (getAdminStatistics)
+import Jizhang.API.Receipt (getAdminReceiptSource)
+import Jizhang.API.ReceiptAI (AdminReceiptExtractionAPI, adminReceiptExtractionServer)
+import Data.Text (Text)
 import Jizhang.API.App
 import Jizhang.API.Types
 import qualified Jizhang.API.Types.ExchangeRate as Q
@@ -55,6 +59,7 @@ type AdminAPI =
     :<|> AdminGroupReceiptsAPI (ReqBody '[JSON] AdminCreateReceiptRequest :> Post '[JSON] Receipt)
     :<|> AdminGroupReceiptsAPI (Get '[JSON] [Receipt])
     :<|> AdminGroupReceiptsAPI ("bulk-delete" :> ReqBody '[JSON] (BulkRequest ReceiptId) :> Post '[JSON] NoContent)
+    :<|> AdminGroupReceiptsAPI (Capture "receiptId" ReceiptId :> Get '[JSON] Receipt)
     :<|> AdminGroupReceiptsAPI (Capture "receiptId" ReceiptId :> Delete '[JSON] NoContent)
     :<|> AdminGroupReceiptsAPI (Capture "receiptId" ReceiptId :> ReqBody '[JSON] UpdateReceiptRequest :> Put '[JSON] Receipt)
     :<|> AdminGroupByIdAPI ("exchange-quotes" :> ReqBody '[JSON] Q.ExchangeQuoteRequest :> Post '[JSON] Q.ExchangeQuote)
@@ -63,6 +68,9 @@ type AdminAPI =
     :<|> AdminGroupRecordsAPI ("income" :> Capture "recordId" RecordId :> ReqBody '[JSON] IncomeRecordRequest :> Put '[JSON] Record)
     :<|> AdminGroupRecordsAPI (Capture "recordId" RecordId :> Get '[JSON] Record)
     :<|> (AdminUserManagementAPI :<|> AdminAuthenticationAPI)
+    :<|> (AdminGroupReceiptsAPI (Capture "receiptId" ReceiptId :> "source" :> Get '[JSON] (Headers '[Header "Cache-Control" Text] ReceiptSourceInput))
+      :<|> AdminReceiptExtractionAPI)
+    :<|> AdminReceiptAIAPI
 
 -- | Bind one authenticated operator to every branch in the route declaration's order.
 adminServer :: AuthAdmin -> MyServer AdminAPI
@@ -96,6 +104,7 @@ adminServer authAdmin =
     :<|> createReceipt authAdmin
     :<|> getGroupReceipts authAdmin
     :<|> bulkDeleteReceipts authAdmin
+    :<|> getAdminReceipt authAdmin
     :<|> deleteReceipt authAdmin
     :<|> updateReceipt authAdmin
     :<|> createAdminExchangeQuote authAdmin
@@ -104,3 +113,5 @@ adminServer authAdmin =
     :<|> updateIncome authAdmin
     :<|> getGroupRecord authAdmin
     :<|> (adminUserManagementServer authAdmin :<|> adminAuthenticationServer authAdmin)
+    :<|> (getAdminReceiptSource authAdmin :<|> adminReceiptExtractionServer authAdmin)
+    :<|> adminReceiptAIServer authAdmin

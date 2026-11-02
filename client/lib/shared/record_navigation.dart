@@ -7,15 +7,20 @@ import 'record_history_unsupported.dart'
 import 'widgets.dart';
 
 Future<void> returnFromRecord(BuildContext context, SessionController session,
-    {required String fallback}) async {
+    {required String fallback, bool Function()? canReturn}) async {
   final generation = session.generation;
   final router = GoRouter.of(context);
+  final origin = router.routerDelegate.currentConfiguration;
+  final form = FormNavigation.active;
+  if (form?.pending == true || canReturn?.call() == false) return;
+  if (!await FormNavigation.canExit(context) || !context.mounted ||
+      generation != session.generation || !session.isAuthenticated ||
+      form?.pending == true || canReturn?.call() == false ||
+      !identical(origin, router.routerDelegate.currentConfiguration)) return;
   if (!router.canPop()) {
     router.go(fallback);
     return;
   }
-  if (!await FormNavigation.canExit(context) || !context.mounted ||
-      generation != session.generation || !session.isAuthenticated) return;
   final route = ModalRoute.of(context);
   final dismissed = router.routeInformationProvider.value.uri.toString();
   Router.neglect(context, () => router.pop());
@@ -28,7 +33,8 @@ Future<void> returnFromRecord(BuildContext context, SessionController session,
   // Replace the dismissed URL first, then consume its entry; Forward cannot reopen an editor.
   platform.consumeRecordHistoryEntry(router.routeInformationProvider.value.uri.toString(), dismissed,
     () => generation == session.generation && session.isAuthenticated &&
-      identical(predecessor, router.routerDelegate.currentConfiguration));
+      identical(predecessor, router.routerDelegate.currentConfiguration),
+    () => router.routeInformationProvider.value.uri.toString());
 }
 
 

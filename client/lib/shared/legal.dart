@@ -12,6 +12,16 @@ void registerJizhangLicense() {
     final text = await rootBundle.loadString('assets/legal/mit.txt');
     yield LicenseEntryWithLineBreaks(const ['Jizhang'], text);
   });
+  LicenseRegistry.addLicense(() async* {
+    final notices = await rootBundle.loadString(
+      'web/vendor/libheif/LICENSES.txt',
+    );
+    yield LicenseEntryWithLineBreaks(const ['libheif-js and HEIF decoder components'], notices);
+    final source = await rootBundle.loadString(
+      'web/vendor/libheif/SOURCE.txt',
+    );
+    yield LicenseEntryWithLineBreaks(const ['libheif-js source and rebuild instructions'], source);
+  });
 }
 
 class LegalLinks extends StatelessWidget {

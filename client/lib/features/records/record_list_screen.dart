@@ -124,6 +124,9 @@ class _RecordListScreenState extends State<RecordListScreen> {
             Text(record.title, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8), amount,
           ],
+          if (record.receipt case final receipt?) Align(alignment: Alignment.centerLeft,
+            child: ReceiptAssociationLink(receipt: receipt,
+              onPressed: () => context.push<void>('/groups/${record.groupId}/receipts/${receipt.receiptId}'))),
           if (record.note?.trim().isNotEmpty ?? false) ...[
             const SizedBox(height: 8),
             Text(record.note!, maxLines: 2, overflow: TextOverflow.ellipsis),

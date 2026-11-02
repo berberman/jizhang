@@ -15,6 +15,8 @@ module Jizhang.API.App
     runDBTransaction,
     runDBSensitive,
     runDBSensitiveTransaction,
+    runDBPrivate,
+    runDBPrivateTransaction,
   )
 where
 
@@ -24,6 +26,7 @@ import Control.Monad.Except (MonadError)
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
 import Data.Aeson.Types (emptyObject)
+import Data.String (fromString)
 import qualified Data.Text as T
 import Data.Time (getCurrentTime)
 import Database.Beam.Postgres (Pg, runBeamPostgres, runBeamPostgresDebug)
@@ -37,6 +40,10 @@ import Jizhang.Database.Auth (AuthTransactionConflict (..))
 import Jizhang.Database.Connection (ConnectionManager, DatabaseUnavailable (..), withConnection)
 import Jizhang.ExchangeRate (ExchangeRateError, ReferenceRate)
 import Jizhang.OIDC (AuthRuntime)
+import Jizhang.ReceiptAI.Contract (ReceiptAIContract)
+import Jizhang.ReceiptAI.Image (ValidatedReceiptImage)
+import Jizhang.ReceiptAI.Provider (ReceiptAIAttempt)
+import Jizhang.ReceiptAI.Runtime (ReceiptAIConfig, ReceiptAIKey)
 import Jizhang.RequestProtection (RequestProtection)
 import Log.Class (MonadLog (getLoggerEnv), logAttention_)
 import Log.Data (LogLevel (..))
@@ -55,7 +62,10 @@ data AppEnv = AppEnv
     appAdminCookieSecure :: !Bool,
     appClientOrigins :: ![T.Text],
     appCurrencies :: !CurrencyCatalog,
-    appFetchReferenceRate :: !(CurrencyCode -> CurrencyCode -> IO (Either ExchangeRateError ReferenceRate))
+    appFetchReferenceRate :: !(CurrencyCode -> CurrencyCode -> IO (Either ExchangeRateError ReferenceRate)),
+    appReceiptAIConfig :: !ReceiptAIConfig,
+    appReceiptAIContract :: !ReceiptAIContract,
+    appExtractReceipt :: !(ReceiptAIKey -> ValidatedReceiptImage -> IO ReceiptAIAttempt)
   }
 
 -- | Interpret a Servant route tree in the shared environment and logger.
@@ -82,14 +92,21 @@ runDBTransaction = runDBWith withTransaction
 
 -- | Secret-bearing persistence must never use SQL parameter logging.
 runDBSensitive :: Pg a -> MyHandler a
-runDBSensitive = runDBSensitiveWith (\_ -> id)
+runDBSensitive = runDBUnloggedWith "Authentication persistence failed" "Account changed; retry the operation" (\_ -> id)
 
 -- | Commit secret-bearing changes serializably; conflicts become 409 without retry.
 runDBSensitiveTransaction :: Pg a -> MyHandler a
-runDBSensitiveTransaction = runDBSensitiveWith (withTransactionMode (TransactionMode Serializable ReadWrite))
+runDBSensitiveTransaction = runDBUnloggedWith "Authentication persistence failed" "Account changed; retry the operation"
+  (withTransactionMode (TransactionMode Serializable ReadWrite))
 
-runDBSensitiveWith :: (Connection -> IO a -> IO a) -> Pg a -> MyHandler a
-runDBSensitiveWith scope action = do
+runDBPrivate :: Pg a -> MyHandler a
+runDBPrivate = runDBUnloggedWith "Private data persistence failed" "Data changed; reload and try again" (\_ -> id)
+
+runDBPrivateTransaction :: Pg a -> MyHandler a
+runDBPrivateTransaction = runDBUnloggedWith "Private data persistence failed" "Data changed; reload and try again" withTransaction
+
+runDBUnloggedWith :: T.Text -> T.Text -> (Connection -> IO a -> IO a) -> Pg a -> MyHandler a
+runDBUnloggedWith failureMessage conflictMessage scope action = do
   connections <- asks appConn
   -- Catch outside scope so a conflict rolls back before it is translated into an HTTP response.
   result <- databaseAction $ try $ try $ withConnection connections $ \conn ->
@@ -102,10 +119,10 @@ runDBSensitiveWith scope action = do
       | sqlState sqlError `elem` ["40001", "40P01"] -> conflict
       | Just response <- constraintError sqlError -> throwError response
       | otherwise -> do
-          logAttention_ "Authentication persistence failed"
-          throwError $ err500 {errBody = "Authentication persistence failed"}
+          logAttention_ failureMessage
+          throwError $ err500 {errBody = fromString $ T.unpack failureMessage}
   where
-    conflict = throwError $ err409 {errBody = "Account changed; retry the operation"}
+    conflict = throwError $ err409 {errBody = fromString $ T.unpack conflictMessage}
 
 runDBWith :: (Connection -> IO a -> IO a) -> Pg a -> MyHandler a
 runDBWith scope action = do

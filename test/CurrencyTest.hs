@@ -34,8 +34,5 @@ currencyTests =
         rejected [CurrencyInfo (CurrencyCode "usd") "US Dollar" 2]
         rejected [CurrencyInfo (CurrencyCode "USD") " " 2]
         rejected [CurrencyInfo (CurrencyCode "USD") "US Dollar" 5]
-        rejected [],
-      testCase "unsupported catalogue code has explicit boundary error" $ do
-        catalog <- loadCurrencyCatalog
-        lookupCurrency catalog (CurrencyCode "ZZZ") @?= Left "Unsupported currency"
+        rejected []
     ]

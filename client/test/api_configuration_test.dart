@@ -45,13 +45,11 @@ void main() {
     expect(await resolve(client), Uri.parse('https://api.example.test/ledger/v1/'));
   });
 
-  for (final body in ['same-origin', ' \tsame-origin\r\n']) {
-    test('explicit same-origin runtime config resolves browser origin (${body.length})', () async {
-      final client = MockClient((_) async => http.Response(body, 200));
-      addTearDown(client.close);
-      expect(await resolve(client), Uri.parse('https://web.example.test'));
-    });
-  }
+  test('explicit same-origin runtime config resolves browser origin after trimming', () async {
+    final client = MockClient((_) async => http.Response(' \tsame-origin\r\n', 200));
+    addTearDown(client.close);
+    expect(await resolve(client), Uri.parse('https://web.example.test'));
+  });
 
   for (final status in [404, 500, 204, 301, 302, 307, 308]) {
     test('HTTP $status fails closed rather than using browser origin', () async {
@@ -77,7 +75,6 @@ void main() {
   });
 
   for (final value in [
-    '',
     ' \t\r\n',
     'SAME-ORIGIN',
     'same-origin/api',

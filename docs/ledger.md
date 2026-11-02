@@ -36,6 +36,14 @@ persistent roster/header, use transitionless routes, and scroll only their own
 content. Receipt expansion state is independent of the page's saved scroll
 offset.
 
+Attached records show their receipt title and an Open receipt action in record
+lists, details/editors, balance breakdowns, and personal-expense statistics,
+including View data. Flutter opens the receipt on its navigation stack; Back
+returns to the originating view. Receipt changes refresh affected record views.
+A full receipt replacement can remove an old child record ID; its old link then
+reports that the record is unavailable. The admin console opens a read-only
+receipt dialog without replacing its current view or unsaved record draft.
+
 User/group choices are searchable and UUID-backed. Member discovery is available
 only to the group owner. Ordinary group and ledger views show public identities,
 not email. Group rows include short IDs to distinguish identical names. Split
@@ -86,9 +94,103 @@ UUID ties stay ascending in either direction. Amount sorting groups currencies.
 
 ## Receipts and CSV imports
 
-Receipts bundle expenses; they are not image uploads. A receipt summary shows its
-own loaded expense total, never a paginated global total. Receipt bundles and
-the five-column CSV import are expense-only.
+Receipts bundle expenses and can retain one normalized JPEG source image. A
+receipt summary shows its own loaded expense total, never a paginated global
+total. Receipt bundles and the five-column CSV import remain expense-only.
+
+Both web clients prepare JPEG, PNG, WebP, and HEIC/HEIF photos locally before
+submission. HEIC/HEIF uses the packaged worker decoder, not native browser
+decoding or a remote conversion service. Selecting a photo sends no extraction
+request; only Read receipt submits its normalized JPEG. Decoder failures retain
+the previous photo and draft. See [client image limits](../client/README.md#receipt-images)
+and [decoder source distribution](licenses.md#heicheif-decoder).
+
+Every receipt requires an editable title, independent of its optional note and
+expense titles. Titles trim surrounding whitespace, retain literal Unicode and
+internal spaces, and allow 1–512 Unicode code points without control characters
+or line separators. Member and administrator create/full-replacement requests
+must include a non-null title. Receipt search matches title or note; title sorting
+uses `title` and `-title`.
+
+Reading a photo also suggests a concise receipt title when visible context
+supports one. A suggestion fills only an untouched blank title. Typing or clearing
+the title prevents later reads from replacing it; a missing suggestion requires
+manual entry before Continue or Save. Title edits do not alter the accepted
+financial review, expense titles, allocations, or saved rates. Suggestions share
+the existing extraction call and are not part of saved financial evidence.
+
+Extraction output must contain exactly `title` (text or null) and `evidence`.
+Duplicate JSON keys, including escaped equivalents, are rejected at every depth.
+The UTF-8 output is limited to 260 KiB, with an independent 256 KiB limit on
+the original evidence JSON, including its whitespace.
+
+Image extraction returns accounting evidence, not financial records. Explicit
+review chooses a supported currency, full calendar date, target total, and tip
+decision. Itemized review uses printed extended line amounts, subtracts selected
+discounts in order, then apportions added charges using frozen discounted bases.
+Included and informational components do not add money twice. Item-ID ascending
+order breaks remainder ties, and final positive expenses must exactly reconcile
+with the confirmed total. Zero-cost items stay in the review without creating
+zero-valued expenses.
+
+Both clients start with itemized review. **Continue** accepts the displayed
+values only after typed validation and exact reconciliation; it does not save a
+receipt or call the provider. External charges require user-selected eligible
+items, and exceptional warnings require acknowledgment. Optional measurements
+and recording modes remain available in disclosures without discarding drafts.
+Expense cards start collapsed; opening one exposes its payer and split controls.
+
+Total-only review creates one expense and does not require unusable itemization
+to be repaired. Actual tips, if known, are already included in the confirmed
+total. Suggested tips never become actual charges. Recording a bill with an
+unknown actual tip requires explicit bill-only confirmation; it does not invent
+a zero tip or a final payment. Accounting dates on individual expenses may differ
+from the historical document date retained in the review.
+
+Source images and original/corrected review snapshots save atomically with the
+expense bundle. Receipt responses contain nullable source metadata, never image
+bytes or evidence. Authorized group members and separate administrators retrieve
+the source on demand through `/groups/:groupId/receipts/:receiptId/source` and
+its `/admin` counterpart. Sources are not public static files or token-bearing
+URLs. Deleting the parent receipt or group deletes its image.
+
+Record responses, balance-breakdown entries, and personal-expense entries require
+nullable `receipt` metadata: either `{receiptId,title}` for an authorized parent
+or null for an unattached record. This is response metadata, not a standalone
+record attach/detach input. Receipt details are available through group-scoped
+`GET /groups/:groupId/receipts/:receiptId` and the `/admin` counterpart; opening
+details does not fetch the source image until View photo is chosen.
+
+On a receipt PUT, omitted `source` preserves it, null removes it, and an object
+replaces it. Original evidence must match a completed extraction for the same
+group and image; corrections belong in the review. Later ordinary expense edits
+do not recalculate saved amounts, splits, or rates from historical evidence.
+Saving a replacement receipt recreates child records and their IDs; the uploader
+and receipt creation time remain unchanged.
+
+### Batch changes within one receipt
+
+Choose **Edit multiple**, select expenses by their open draft identity, then
+independently enable payer, accounting date, or participant/split-policy
+replacement. **Done** clears the selection without dirtying the receipt. Every
+proposed change is checked before any selected row is mutated; invalid input
+leaves all rows unchanged.
+
+Equal, shares, and percentage batches do not require unrelated incomplete titles
+or amounts to be filled first. Shares are bounded nonnegative integers with a
+positive total; percentages use exact basis points totaling 10000. Exact amounts
+require selected expenses with the same original currency and amount, and the
+copied allocations must sum to that amount. Use shares or percentages otherwise.
+
+Unselected expenses, titles, notes, money, currencies, exchange-rate provenance,
+and disabled batch fields remain untouched. Payer/date/split-only changes do not
+fetch a new rate. Saving is still one whole-receipt replacement with new child
+record IDs, not a group-wide batch API. Imported payer/split changes require
+renewed confirmation; changing only accounting dates does not change the
+historical document date or that confirmation.
+
+
+### CSV imports
 
 CSV imports are atomic. The editable source is exactly what is sent, whether
 selected from a UTF-8 file or pasted. Record notes do not change the five-column

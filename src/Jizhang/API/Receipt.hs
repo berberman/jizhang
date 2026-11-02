@@ -12,17 +12,20 @@ import Control.Monad (forM)
 import Control.Monad.Reader (asks)
 import Data.Coerce (coerce)
 import Data.List (sortOn)
+import qualified Data.Map.Strict as M
 import Data.Text (Text)
 import Data.UUID (UUID, toText)
 import Jizhang.API.Common
 import Jizhang.API.App
+import Jizhang.API.Receipt.Source (prepareReceiptSource, persistReceiptSource)
+import Jizhang.API.ReceiptAI (ReceiptExtractionAPI, receiptExtractionServer)
 import Jizhang.API.RequestProtection (enforceExpensiveLimit)
-import Jizhang.RequestProtection (Principal (UserPrincipal))
+import Jizhang.RequestProtection (Principal (UserPrincipal, AdminPrincipal))
 import Jizhang.API.Types
 import Jizhang.API.Internal.Error (fromStoredData, fetchOrFail)
 import Jizhang.API.User.Projection (UserMap, resolveUser)
 import Jizhang.API.Record.Projection (recordToSplitRecord)
-import Jizhang.API.Record.Input (resolveExpenseRequest, withGroupCurrencyLock)
+import Jizhang.API.Record.Input (resolveExpenseRequest, withGroupCurrencyLockPrivate)
 import Jizhang.API.Internal.Resource (getGroupUserMap, ensureGroupExists, ensureGroupMember, ensureReceiptExists)
 import Jizhang.Currency (CurrencyCatalog)
 import qualified Jizhang.Database as D
@@ -41,8 +44,10 @@ type ReceiptAPI =
     :<|> "groups" :> Capture "groupId" GroupId :> "receipts" :> Capture "receiptId" ReceiptId :> Get '[JSON] Receipt
     -- Delete a receipt and its child expenses
     :<|> "groups" :> Capture "groupId" GroupId :> "receipts" :> Capture "receiptId" ReceiptId :> Delete '[JSON] NoContent
-    -- Update a receipt (replace note and all records)
+    -- Update a receipt (replace title, note and all records)
     :<|> "groups" :> Capture "groupId" GroupId :> "receipts" :> Capture "receiptId" ReceiptId :> ReqBody '[JSON] UpdateReceiptRequest :> Put '[JSON] Receipt
+    :<|> ("groups" :> Capture "groupId" GroupId :> "receipts" :> Capture "receiptId" ReceiptId :> "source" :> Get '[JSON] (Headers '[Header "Cache-Control" Text] ReceiptSourceInput)
+      :<|> ReceiptExtractionAPI)
 
 receiptServer :: AuthUser -> MyServer ReceiptAPI
 receiptServer authUser =
@@ -51,6 +56,7 @@ receiptServer authUser =
     :<|> getReceipt authUser
     :<|> deleteReceipt authUser
     :<|> updateReceipt authUser
+    :<|> (getReceiptSource authUser :<|> receiptExtractionServer authUser)
 
 -- | Shared loader without authorization; callers must authorize the parent group.
 getReceiptsByGroupId :: UUID -> MyHandler [Receipt]
@@ -70,23 +76,29 @@ createReceipt authUser (GroupId gId) CreateReceiptRequest {..} = do
   group <- fst <$> (fetchOrFail "Group" gId $ runDB (D.getGroupWithMembers gId))
   ensureGroupMember (authUserId authUser) gId
   resolved <- mapM (resolveExpenseRequest group) records
-  (receipt, dbRecords) <- (if null resolved then runDBTransaction else withGroupCurrencyLock group) $ do
-    receipt <- D.insertReceipt gId (authUserId authUser) note
+  preparedSource <- prepareReceiptSource gId records (maybe KeepReceiptSource ReplaceReceiptSource source)
+  (receipt, dbRecords) <- (if null resolved then runDBPrivateTransaction else withGroupCurrencyLockPrivate group) $ do
+    receipt <- D.insertReceipt gId (authUserId authUser) title note
     let rctId = S._receiptId receipt
     recs <- forM resolved $ D.insertSplitRecord D.ExpenseKind gId (Just rctId)
+    persistReceiptSource rctId preparedSource
     pure (receipt, recs)
   um <- getGroupUserMap gId
   currencies <- asks appCurrencies
-  apiRecords <- fromStoredData $ traverse (uncurry (recordToSplitRecord D.ExpenseKind currencies um)) dbRecords
+  let summaries = M.singleton (S._receiptId receipt) (ReceiptSummary (coerce $ S._receiptId receipt) (S._receiptTitle receipt))
+  apiRecords <- fromStoredData $ traverse (uncurry (recordToSplitRecord D.ExpenseKind currencies um summaries)) dbRecords
   let uploadedByUser = resolveUser um (S.unUserId $ S._receiptUploadedBy receipt)
+  sourceMeta <- runDBPrivate $ D.getReceiptSourceMeta gId (S._receiptId receipt)
   pure
     Receipt
       { receiptId = coerce $ S._receiptId receipt,
         groupId = coerce gId,
         uploadedBy = uploadedByUser,
+        title = S._receiptTitle receipt,
         note = S._receiptNote receipt,
         records = apiRecords,
-        createdAt = S._receiptCreatedAt receipt
+        createdAt = S._receiptCreatedAt receipt,
+        source = sourceMeta
       }
 
 getReceipts :: AuthUser -> GroupId -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> MyHandler (PaginatedResponse Receipt)
@@ -113,34 +125,44 @@ deleteReceipt authUser (GroupId gId) (ReceiptId rId) = do
   ensureGroupMember (authUserId authUser) gId
   ensureReceiptExists gId rId
   children <- runDB $ D.getRecordsForReceipt gId rId
-  (if null children then runDBTransaction else withGroupCurrencyLock group) $
+  (if null children then runDBPrivateTransaction else withGroupCurrencyLockPrivate group) $
     D.deleteReceiptWithRecords gId rId
   pure NoContent
 
--- | Replace the note and children while retaining the original uploader and creation time.
+-- | Replace metadata and children while retaining the original uploader and creation time.
 updateReceipt :: AuthUser -> GroupId -> ReceiptId -> UpdateReceiptRequest -> MyHandler Receipt
 updateReceipt authUser (GroupId gId) (ReceiptId rId) UpdateReceiptRequest {..} = do
   enforceExpensiveLimit (UserPrincipal $ authUserId authUser)
   logInfo_ $ "Updating receipt " <> toText rId <> " in group " <> toText gId
   group <- fst <$> (fetchOrFail "Group" gId $ runDB (D.getGroupWithMembers gId))
   ensureGroupMember (authUserId authUser) gId
-  receipt <- fetchOrFail "Receipt" rId $ runDB (D.getReceipt gId rId)
   resolved <- mapM (resolveExpenseRequest group) records
-  dbRecords <-
-    (if null resolved then runDBTransaction else withGroupCurrencyLock group) $
-      D.replaceReceiptRecords gId rId note resolved
+  preparedSource <- prepareReceiptSource gId records source
+  (receipt, dbRecords) <- fetchOrFail "Receipt" rId $
+    (if null resolved then runDBPrivateTransaction else withGroupCurrencyLockPrivate group) $ do
+      locked <- D.lockReceipt gId rId
+      case locked of
+        Nothing -> pure Nothing
+        Just receipt -> do
+          children <- D.replaceReceiptRecords gId rId title note resolved
+          persistReceiptSource rId preparedSource
+          pure $ Just (receipt, children)
   um <- getGroupUserMap gId
   currencies <- asks appCurrencies
-  apiRecords <- fromStoredData $ traverse (uncurry (recordToSplitRecord D.ExpenseKind currencies um)) dbRecords
+  let summaries = M.singleton rId (ReceiptSummary (coerce rId) title)
+  apiRecords <- fromStoredData $ traverse (uncurry (recordToSplitRecord D.ExpenseKind currencies um summaries)) dbRecords
   let uploadedByUser = resolveUser um (S.unUserId $ S._receiptUploadedBy receipt)
+  sourceMeta <- runDBPrivate $ D.getReceiptSourceMeta gId rId
   pure
     Receipt
       { receiptId = coerce rId,
         groupId = coerce gId,
         uploadedBy = uploadedByUser,
+        title = title,
         note = note,
         records = apiRecords,
-        createdAt = S._receiptCreatedAt receipt
+        createdAt = S._receiptCreatedAt receipt,
+        source = sourceMeta
       }
 
 -- | Project persisted child allocations; the historical user map must contain the uploader.
@@ -148,28 +170,47 @@ buildReceiptResponse :: CurrencyCatalog -> UserMap -> S.Receipt -> MyHandler Rec
 buildReceiptResponse currencies um receipt = do
   let rctId = S._receiptId receipt
       gId = S.unGroupId $ S._receiptGroup receipt
+      summaries = M.singleton rctId (ReceiptSummary (coerce rctId) (S._receiptTitle receipt))
   recs <- runDB $ D.getRecordsForReceipt gId rctId
   apiRecords <- forM recs $ \rec -> do
     ss <- runDB $ D.getRecordSplitsForRecord (S._recordId rec)
-    fromStoredData $ recordToSplitRecord D.ExpenseKind currencies um rec ss
+    fromStoredData $ recordToSplitRecord D.ExpenseKind currencies um summaries rec ss
   let uploadedByUser = resolveUser um (S.unUserId $ S._receiptUploadedBy receipt)
+  sourceMeta <- runDBPrivate $ D.getReceiptSourceMeta gId rctId
   pure
     Receipt
       { receiptId = coerce rctId,
         groupId = coerce . S.unGroupId $ S._receiptGroup receipt,
         uploadedBy = uploadedByUser,
+        title = S._receiptTitle receipt,
         note = S._receiptNote receipt,
         records = apiRecords,
-        createdAt = S._receiptCreatedAt receipt
+        createdAt = S._receiptCreatedAt receipt,
+        source = sourceMeta
       }
 
 filterReceipts :: Maybe Text -> [Receipt] -> [Receipt]
 filterReceipts Nothing = id
-filterReceipts (Just queryText) = filter (matchesQuery queryText . receiptNoteOf)
+filterReceipts (Just queryText) = filter $ \receipt@(Receipt _ _ _ _ note _ _ _) ->
+  matchesQuery queryText (receiptTitleOf receipt) || matchesQuery queryText note
 
 sortReceipts :: [Receipt] -> Maybe Text -> [Receipt]
-sortReceipts receipts Nothing = sortOn receiptNoteOf receipts
-sortReceipts receipts (Just sortText) = applySort sortText receiptNoteOf receipts
+sortReceipts receipts Nothing = sortOn receiptTitleOf receipts
+sortReceipts receipts (Just sortText) = applySort sortText receiptTitleOf receipts
 
-receiptNoteOf :: Receipt -> Text
-receiptNoteOf (Receipt _ _ _ note _ _) = note
+receiptTitleOf :: Receipt -> Text
+receiptTitleOf (Receipt _ _ _ title _ _ _ _) = title
+
+getReceiptSource :: AuthUser -> GroupId -> ReceiptId -> MyHandler (Headers '[Header "Cache-Control" Text] ReceiptSourceInput)
+getReceiptSource authUser (GroupId gid) (ReceiptId rid) = do
+  ensureGroupMember (authUserId authUser) gid
+  enforceExpensiveLimit (UserPrincipal $ authUserId authUser)
+  source <- fetchOrFail "Receipt source" rid $ runDBPrivate (D.getReceiptSource gid rid)
+  pure $ addHeader "no-store" source
+
+getAdminReceiptSource :: AuthAdmin -> GroupId -> ReceiptId -> MyHandler (Headers '[Header "Cache-Control" Text] ReceiptSourceInput)
+getAdminReceiptSource authAdmin (GroupId gid) (ReceiptId rid) = do
+  ensureGroupExists gid
+  enforceExpensiveLimit (AdminPrincipal $ authAdminId authAdmin)
+  source <- fetchOrFail "Receipt source" rid $ runDBPrivate (D.getReceiptSource gid rid)
+  pure $ addHeader "no-store" source

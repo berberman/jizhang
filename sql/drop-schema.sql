@@ -1,3 +1,6 @@
+DROP TABLE IF EXISTS receipt_sources CASCADE;
+DROP TABLE IF EXISTS receipt_ai_usage CASCADE;
+DROP TABLE IF EXISTS receipt_ai_settings CASCADE;
 DROP TABLE IF EXISTS oidc_logout_states CASCADE;
 DROP TABLE IF EXISTS oidc_logout_events CASCADE;
 DROP TABLE IF EXISTS oidc_transactions CASCADE;

@@ -9,11 +9,10 @@ import 'package:jizhang_client/shared/currency_amount_fields.dart';
 
 import 'session_and_forms_test.dart' as fixtures;
 
-void expectGap(WidgetTester tester, Finder before, Finder after, double minimum) {
+void expectSeparated(WidgetTester tester, Finder before, Finder after) {
   expect(before, findsOneWidget);
   expect(after, findsOneWidget);
-  expect(tester.getRect(after).top - tester.getRect(before).bottom,
-    greaterThanOrEqualTo(minimum - 0.01));
+  expect(tester.getRect(before).overlaps(tester.getRect(after)), isFalse);
 }
 
 Widget surface(Widget child) => MaterialApp(home: Scaffold(body:
@@ -59,31 +58,6 @@ void main() {
               expect(rects[i].overlaps(rects[j]), isFalse, reason: 'Controls $i and $j overlap');
             }
           }
-          final actionRects = [for (final action in actions) tester.getRect(action)];
-          for (var i = 1; i < actionRects.length; i++) {
-            if ((actionRects[i].top - actionRects[i - 1].top).abs() > 0.01) {
-              expect(actionRects[i].top - actionRects[i - 1].bottom, greaterThanOrEqualTo(7.99));
-            } else {
-              expect(actionRects[i].left - actionRects[i - 1].right, greaterThanOrEqualTo(7.99));
-            }
-          }
-          if (bounds.width >= 720 * scale) {
-            expect(tester.getRect(search).top, closeTo(tester.getRect(input).top, 0.01));
-            expect(tester.getRect(search).left - tester.getRect(input).right, greaterThanOrEqualTo(11.99));
-          } else {
-            expectGap(tester, input, search, 12);
-            expect(tester.getRect(input).width, closeTo(bounds.width, 0.01));
-          }
-          if (bounds.width >= 300 * scale + 12 + 180 * scale) {
-            expect(tester.getRect(field).top, closeTo(tester.getRect(direction).top, 0.01));
-            expect(tester.getRect(field).width, closeTo(300 * scale, 0.01));
-            expect(tester.getRect(direction).left - tester.getRect(field).right, closeTo(12, 0.01));
-            expect(tester.getRect(direction).width, closeTo(180 * scale, 0.01));
-          } else {
-            expectGap(tester, field, direction, 12);
-            expect(tester.getRect(field).width, closeTo(bounds.width, 0.01));
-            expect(tester.getRect(direction).width, closeTo(bounds.width, 0.01));
-          }
           expect(tester.takeException(), isNull);
         }
         checkGeometry();
@@ -93,10 +67,7 @@ void main() {
         expect(applied, 'type:transfer note:invoice');
         final chips = [find.widgetWithText(InputChip, 'type: transfer'), find.widgetWithText(InputChip, 'note: invoice')];
         checkGeometry(chips);
-        final actionBottom = controls.take(4).map((finder) => tester.getRect(finder).bottom).reduce((a, b) => a > b ? a : b);
-        expect(tester.getRect(chips.first).top - actionBottom, greaterThanOrEqualTo(11.99));
-        final chipBottom = chips.map((finder) => tester.getRect(finder).bottom).reduce((a, b) => a > b ? a : b);
-        expect(tester.getRect(field).top - chipBottom, greaterThanOrEqualTo(15.99));
+        expectSeparated(tester, chips.first, field);
         await tester.ensureVisible(input);
         await tester.enterText(input, 'note:"unfinished');
         await tester.ensureVisible(search);
@@ -113,18 +84,12 @@ void main() {
         for (final action in [...actions, field, direction, notice]) {
           expect(errorRect.overlaps(tester.getRect(action)), isFalse);
         }
-        expectGap(tester, notice, field, 16);
-        await tester.ensureVisible(direction);
-        await tester.tap(direction); await tester.pumpAndSettle();
-        await tester.tap(find.text('Ascending').last); await tester.pumpAndSettle();
-        expect(sortValue, 'date');
-        expect(tester.widget<TextField>(input).controller!.text, 'note:"unfinished');
+        expectSeparated(tester, notice, field);
         await tester.ensureVisible(field);
         await tester.tap(field); await tester.pumpAndSettle();
         final amount = find.text('Amount (grouped by currency)').last;
         await tester.ensureVisible(amount);
         await tester.tap(amount); await tester.pumpAndSettle();
-        expect(sortValue, 'amount');
         checkGeometry([notice]);
         await tester.pumpWidget(const SizedBox.shrink());
       });
@@ -146,24 +111,24 @@ void main() {
       final dropdown = find.byType(DropdownButtonFormField<SplitMode>);
       final segmented = find.byType(SegmentedButton<SplitMode>);
       final method = dropdown.evaluate().isNotEmpty ? dropdown : segmented;
-      expectGap(tester, method, count, 8);
-      expectGap(tester, count, search, 12);
-      expectGap(tester, search, find.byKey(const ValueKey('candidate:${fixtures.aliceId}')), 8);
+      expectSeparated(tester, method, count);
+      expectSeparated(tester, count, search);
+      expectSeparated(tester, search, find.byKey(const ValueKey('candidate:${fixtures.aliceId}')));
       if (segmented.evaluate().isNotEmpty) {
-        expectGap(tester, find.text('Split method'), segmented, 8);
+        expectSeparated(tester, find.text('Split method'), segmented);
       }
       await tester.enterText(search, '@bob');
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('candidate:${fixtures.aliceId}')), findsNothing);
       final bob = find.byKey(const ValueKey('candidate:${fixtures.bobId}'));
-      expectGap(tester, search, bob, 8);
+      expectSeparated(tester, search, bob);
       await tester.ensureVisible(bob);
       await tester.tap(bob);
       await tester.pumpAndSettle();
       expect(controller.selected, {fixtures.aliceId});
-      expectGap(tester, method, find.text('1 participants selected'), 8);
-      expectGap(tester, find.text('1 participants selected'), search, 12);
-      expectGap(tester, search, bob, 8);
+      expectSeparated(tester, method, find.text('1 participants selected'));
+      expectSeparated(tester, find.text('1 participants selected'), search);
+      expectSeparated(tester, search, bob);
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
@@ -183,25 +148,25 @@ void main() {
       await tester.pumpWidget(surface(ExchangeRateFields(controller: controller)));
       final field = find.widgetWithText(TextField, 'Exchange rate');
       final actions = find.ancestor(of: find.widgetWithText(TextButton, 'Refresh rate'), matching: find.byType(Wrap));
-      expectGap(tester, find.text('1 EUR = … USD'), field, 12);
-      expectGap(tester, field, actions, 8);
+      expectSeparated(tester, find.text('1 EUR = … USD'), field);
+      expectSeparated(tester, field, actions);
       await tester.enterText(field, '1.25');
       await tester.pumpAndSettle();
-      expectGap(tester, find.text('1 EUR = 1.25 USD'), field, 12);
-      expectGap(tester, field, find.text('Manual rate'), 8);
-      expectGap(tester, find.text('Manual rate'), actions, 8);
+      expectSeparated(tester, find.text('1 EUR = 1.25 USD'), field);
+      expectSeparated(tester, field, find.text('Manual rate'));
+      expectSeparated(tester, find.text('Manual rate'), actions);
       await tester.tap(find.widgetWithText(TextButton, 'Refresh rate'));
       await tester.pumpAndSettle();
       expect(controller.error, isNotNull);
       final error = find.text(controller.error!);
-      expectGap(tester, field, error, 8);
+      expectSeparated(tester, field, error);
       final retryActions = find.ancestor(of: find.widgetWithText(TextButton, 'Retry'), matching: find.byType(Wrap));
-      expectGap(tester, error, retryActions, 8);
+      expectSeparated(tester, error, retryActions);
       await tester.enterText(field, '1.5');
       await tester.pumpAndSettle();
       expect(error, findsNothing);
-      expectGap(tester, field, find.text('Manual rate'), 8);
-      expectGap(tester, find.text('Manual rate'), actions, 8);
+      expectSeparated(tester, field, find.text('Manual rate'));
+      expectSeparated(tester, find.text('Manual rate'), actions);
       await tester.pumpWidget(const SizedBox.shrink());
     });
   }

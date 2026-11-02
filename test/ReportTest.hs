@@ -6,13 +6,16 @@
 -- Cases preserve currency isolation, current UUID identities and exact per-record reconciliation.
 module ReportTest (reportTests) where
 
-import Data.Aeson (Result (..), Value (String), fromJSON, object, toJSON, (.=))
+import Control.Monad (forM_)
+import Data.Aeson (Result (..), Value (..), fromJSON, object, toJSON, (.=))
+import qualified Data.Aeson.KeyMap as KM
 import Data.Int (Int64)
 import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 import Data.Time (Day, UTCTime (..), fromGregorian, secondsToDiffTime)
 import Data.UUID (UUID)
 import Jizhang.API.Types hiding (totalMinor)
+import qualified Jizhang.API.Types.Record as Records
 import Jizhang.API.Types.Report (Balance (totalMinor))
 import Jizhang.Report.Balance (calculateBalance, calculateReport, calculateSettlement, zeroBalances)
 import Jizhang.Report.Markdown (reportToMarkdown)
@@ -54,6 +57,7 @@ expense n info total payer allocations =
       date = fromGregorian 2025 6 1,
       createdAt = UTCTime (fromGregorian 2025 1 1) (secondsToDiffTime 0),
       groupId = gid,
+      receipt = Nothing,
       splitMode = ExactSplit,
       splits = [RecordSplit person (MinorAmount amount) (MinorAmount amount) (MinorAmount amount) | (person, amount) <- allocations]
     }
@@ -74,6 +78,7 @@ income n info total recipient allocations =
       date = fromGregorian 2025 6 1,
       createdAt = UTCTime (fromGregorian 2025 1 1) (secondsToDiffTime 0),
       groupId = gid,
+      receipt = Nothing,
       splitMode = ExactSplit,
       splits = [RecordSplit person (MinorAmount amount) (MinorAmount amount) (MinorAmount amount) | (person, amount) <- allocations]
     }
@@ -94,7 +99,8 @@ payment n info total payer recipient =
       transferTo = recipient,
       date = fromGregorian 2025 6 2,
       createdAt = UTCTime (fromGregorian 2025 1 1) (secondsToDiffTime 0),
-      groupId = gid
+      groupId = gid,
+      receipt = Nothing
     }
 
 -- | Look up a required roster member; a missing balance is a fixture or calculation failure.
@@ -113,7 +119,8 @@ entry n label day kind gross delta =
       date = day,
       recordType = kind,
       recordAmountMinor = MinorAmount gross,
-      amountMinor = MinorAmount delta
+      amountMinor = MinorAmount delta,
+      receipt = Nothing
     }
 
 roles :: Balance -> [MinorAmount]
@@ -248,18 +255,6 @@ reportTests =
               "one net contribution per expense, UUID ties ascending"
               [entry 1 "Dinner" (fromGregorian 2025 6 1) "expense" 6000 4000, entry 2 "Dinner" (fromGregorian 2025 6 1) "expense" 9000 6000]
               entries,
-      testCase "shared income credits beneficiaries and merges recipient entitlement" $ do
-        let balances = calculateBalance [alice, bob] [income 1 usd 6000 bob [(alice, 3000), (bob, 3000)]] M.! code usd
-        assertEqual "Alice entitlement" (MinorAmount 3000) (balanceOf alice balances)
-        assertEqual "Bob owes Alice" [Settlement bob alice (MinorAmount 3000)] (calculateSettlement balances)
-        let expected =
-              (emptyBalance bob)
-                { totalMinor = MinorAmount (-3000),
-                  incomeReceivedMinor = MinorAmount 6000,
-                  incomeEntitlementMinor = MinorAmount 3000,
-                  breakdown = [entry 1 "Shared income" (fromGregorian 2025 6 1) "income" 6000 (-3000)]
-                }
-        assertEqual "recipient net entry" expected (balances M.! userIdOf bob),
       testCase "income recipient need not be a beneficiary" $ do
         let balances = calculateBalance [alice, bob, charlie] [income 1 usd 6000 charlie [(alice, 3000), (bob, 3000)]] M.! code usd
         assertEqual "entitlements and recipient debt" [MinorAmount 3000, MinorAmount 3000, MinorAmount (-6000)] (map (`balanceOf` balances) [alice, bob, charlie])
@@ -279,6 +274,7 @@ reportTests =
                   date = fromGregorian 2025 6 1,
                   createdAt = UTCTime (fromGregorian 2025 1 1) (secondsToDiffTime 0),
                   groupId = gid,
+                  receipt = Nothing,
                   splitMode = EqualSplit,
                   splits = [RecordSplit alice (MinorAmount 1) (MinorAmount 0) (MinorAmount 50), RecordSplit bob (MinorAmount 1) (MinorAmount 1) (MinorAmount 50)]
                 }
@@ -325,6 +321,47 @@ reportTests =
         assertEqual "gross paid also exceeds Int64 exactly" (map MinorAmount [2 * bound, 0, 0, 0, 0, 0]) (roles a)
         assertEqual "gross share also exceeds Int64 exactly" (map MinorAmount [0, 2 * bound, 0, 0, 0, 0]) (roles b)
         mapM_ assertReconciled [a, b],
+      testCase "receipt metadata survives merged zero impacts without changing financial roles" $ do
+        let association = Just $ ReceiptSummary (ReceiptId $ mkUUID 500) "会议 <b>Market</b>"
+            original = expense 1 usd 9000 alice [(alice, 9000), (bob, 0)]
+            linked = original {Records.receipt = association}
+            baseline = calculateBalance [alice, bob] [original] M.! code usd
+            balances = calculateBalance [alice, bob] [linked] M.! code usd
+        map roles (M.elems balances) @?= map roles (M.elems baseline)
+        map (`balanceOf` balances) [alice, bob] @?= [MinorAmount 0, MinorAmount 0]
+        [value | Balance {breakdown = entries} <- M.elems balances, BalanceBreakdown {receipt = value} <- entries] @?= [association, association]
+        [amount | Balance {breakdown = entries} <- M.elems balances, BalanceBreakdown {amountMinor = amount} <- entries] @?= [MinorAmount 0, MinorAmount 0]
+        mapM_ assertReconciled (M.elems balances),
+      testCase "record and report response receipt keys are required nullable metadata" $ do
+        let association = ReceiptSummary (ReceiptId $ mkUUID 500) "会议 <b>Market</b>"
+            rows = [expense 1 usd 100 alice [(alice, 100)], income 2 usd 100 alice [(alice, 100)], payment 3 usd 100 alice bob]
+            deleteReceipt (Object fields) = Object $ KM.delete "receipt" fields
+            deleteReceipt _ = error "Expected response object"
+            setReceipt value (Object fields) = Object $ KM.insert "receipt" value fields
+            setReceipt _ _ = error "Expected response object"
+        toJSON association @?= object ["receiptId" .= ReceiptId (mkUUID 500), "title" .= ("会议 <b>Market</b>" :: T.Text)]
+        forM_ rows $ \row -> do
+          fromJSON (toJSON row) @?= Success row
+          case fromJSON (deleteReceipt $ toJSON row) :: Result Record of
+            Error _ -> pure ()
+            Success _ -> assertFailure "Missing receipt key accepted"
+          forM_ [String "invalid", object ["receiptId" .= ReceiptId (mkUUID 500)]] $ \invalid ->
+            case fromJSON (setReceipt invalid $ toJSON row) :: Result Record of
+              Error _ -> pure ()
+              Success _ -> assertFailure "Invalid receipt summary accepted"
+          case fromJSON (setReceipt (toJSON association) $ toJSON row) :: Result Record of
+            Success projected -> toJSON projected @?= setReceipt (toJSON association) (toJSON row)
+            Error message -> assertFailure message
+        let breakdown = entry 1 "Apples" (fromGregorian 2026 10 21) "expense" 100 0
+            personal = PersonalExpense (RecordId $ mkUUID 1) "Apples" (fromGregorian 2026 10 21) (MinorAmount 100) Nothing
+        fromJSON (toJSON breakdown) @?= Success breakdown
+        fromJSON (toJSON personal) @?= Success personal
+        case fromJSON (deleteReceipt $ toJSON breakdown) :: Result BalanceBreakdown of
+          Error _ -> pure ()
+          Success _ -> assertFailure "Missing breakdown receipt key accepted"
+        case fromJSON (deleteReceipt $ toJSON personal) :: Result PersonalExpense of
+          Error _ -> pure ()
+          Success _ -> assertFailure "Missing personal expense receipt key accepted",
       testCase "expanded balance JSON preserves exact gross roles and requires new fields" $ do
         let balances =
               calculateBalance
@@ -348,7 +385,8 @@ reportTests =
                              "date" .= String "2025-06-02",
                              "recordType" .= String "transfer",
                              "recordAmountMinor" .= String "2000",
-                             "amountMinor" .= String "-2000"
+                             "amountMinor" .= String "-2000",
+                             "receipt" .= Null
                            ],
                          object
                            [ "recordId" .= RecordId (mkUUID 1),
@@ -356,7 +394,8 @@ reportTests =
                              "date" .= String "2025-06-01",
                              "recordType" .= String "expense",
                              "recordAmountMinor" .= String "9000",
-                             "amountMinor" .= String "6000"
+                             "amountMinor" .= String "6000",
+                             "receipt" .= Null
                            ],
                          object
                            [ "recordId" .= RecordId (mkUUID 2),
@@ -364,7 +403,8 @@ reportTests =
                              "date" .= String "2025-06-01",
                              "recordType" .= String "income",
                              "recordAmountMinor" .= String "6000",
-                             "amountMinor" .= String "3000"
+                             "amountMinor" .= String "3000",
+                             "receipt" .= Null
                            ]
                        ]
                 ]

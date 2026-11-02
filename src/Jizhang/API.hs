@@ -170,7 +170,7 @@ app appEnv = do
               now <- getCurrentTime
               let code = statusCode $ responseStatus response
                   level = if code >= 500 then LogAttention else LogInfo
-              logger now level ("Authentication request completed " <> T.pack (show code)) emptyObject
+              logger now level ("Sensitive request completed " <> T.pack (show code)) emptyObject
               respond $
                 mapResponseHeaders
                   ( \headers ->
@@ -212,4 +212,9 @@ app appEnv = do
     sensitiveRoute ("admin" : "users" : _) = True
     sensitiveRoute ("admin" : "admins" : _) = True
     sensitiveRoute ("users" : "me" : operation : _) = operation `elem` ["authentication", "reauthenticate", "oidc", "password", "identity", "logout"]
+    sensitiveRoute ("groups" : _ : "receipts" : _) = True
+    sensitiveRoute ("groups" : _ : "receipt-extractions" : _) = True
+    sensitiveRoute ("admin" : "groups" : _ : "receipts" : _) = True
+    sensitiveRoute ("admin" : "groups" : _ : "receipt-extractions" : _) = True
+    sensitiveRoute ("admin" : "receipt-ai" : _) = True
     sensitiveRoute _ = False

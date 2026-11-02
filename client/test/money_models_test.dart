@@ -16,6 +16,7 @@ Map<String, Object?> expenseJson() => {
   'tag': 'ExpenseRecord',
   'recordId': '00000000-0000-0000-0000-000000000002',
   'groupId': '00000000-0000-0000-0000-000000000003',
+  'receipt': null,
   'title': 'Large exact expense',
   'note': null,
   'amountMinor': '9007199254740993',
@@ -43,9 +44,56 @@ JizhangRepository repository(MockClient client) => JizhangRepository(ApiClient(
 ));
 
 void main() {
+  test('receipt titles are required validated text in responses and drafts', () {
+    const title = '会议 <b>Market</b>';
+    final receipt = <String, Object?>{'receiptId': 'receipt-id', 'groupId': 'group-id',
+      'uploadedBy': _user, 'title': title, 'note': 'Separate note', 'records': <Object?>[],
+      'createdAt': '2026-10-21T00:00:00Z', 'source': null};
+    final draft = ReceiptDraft(title: title, note: 'Separate note', records: []).toJson();
+    expect(Receipt.fromJson(receipt).title, title);
+    expect(Receipt.fromJson(receipt).note, 'Separate note');
+    expect(ReceiptDraft.fromJson(draft).title, title);
+    expect(ReceiptDraft.fromJson(draft).toJson(), draft);
+    final emoji = List.filled(512, '😀').join();
+    expect(Receipt.fromJson({...receipt, 'title': ' $emoji '}).title, emoji);
+    expect(ReceiptDraft.fromJson({...draft, 'title': ' $emoji '}).title, emoji);
+    expect(draft['title'], title);
+    for (final json in [receipt, draft]) {
+      final Object Function(Object?) decode = json.containsKey('receiptId') ? Receipt.fromJson : ReceiptDraft.fromJson;
+      expect(() => decode({...json}..remove('title')), throwsFormatException);
+      for (final invalid in <Object?>[null, 1, false, '', '   ', 'bad\ntext', List.filled(513, '😀').join()]) {
+        expect(() => decode({...json, 'title': invalid}), throwsFormatException);
+      }
+      expect(() => decode({...json, 'unknown': true}), throwsFormatException);
+    }
+    expect(() => ReceiptDraft(title: '', note: '', records: []), throwsFormatException);
+  });
+
+  test('receipt title normalization rejects controls before trimming and counts code points', () {
+    const literal = '会议 <b>Market</b>  groceries';
+    expect(normalizeReceiptTitle(' \u00a0\u1680$literal\u2000\u202f\u205f\u3000 '), literal);
+    expect(normalizeReceiptTitle('\ufeff$literal\ufeff'), '\ufeff$literal\ufeff');
+    final emoji = List.filled(512, '😀').join();
+    expect(normalizeReceiptTitle(emoji), emoji);
+    expect(ReceiptDraft(title: ' $emoji ', note: '', records: []).title, emoji);
+    expect(normalizeReceiptTitle(List.filled(256, 'e\u0301').join()).runes.length, 512);
+    expect(() => normalizeReceiptTitle('$emoji😀'), throwsA(isA<FormatException>().having(
+      (error) => error.message, 'message', 'Receipt title must be at most 512 characters.')));
+    expect(() => normalizeReceiptTitle(' \u00a0 '), throwsA(isA<FormatException>().having(
+      (error) => error.message, 'message', 'Receipt title is required.')));
+    for (final codePoint in [for (var value = 0; value <= 0x1f; value++) value,
+        for (var value = 0x7f; value <= 0x9f; value++) value, 0x2028, 0x2029]) {
+      for (final title in [String.fromCharCode(codePoint), '${String.fromCharCode(codePoint)}Market', 'Market${String.fromCharCode(codePoint)}']) {
+        expect(() => normalizeReceiptTitle(title), throwsA(isA<FormatException>().having(
+          (error) => error.message, 'message', 'Receipt title cannot contain control characters.')));
+      }
+    }
+  });
+
   test('balance roles and record context are required exact values without record bounds', () {
     const large = '18446744073709551614';
     final line = <String, Object?>{'recordId': 'record-id', 'title': 'Saved amount',
+      'receipt': null,
       'date': '2026-10-02', 'recordType': 'expense', 'recordAmountMinor': '9000', 'amountMinor': '-3000'};
     final value = <String, Object?>{'user': _user, 'totalMinor': large,
       'expensesPaidMinor': large, 'expenseShareMinor': '0', 'incomeReceivedMinor': '0',
@@ -63,7 +111,7 @@ void main() {
         expect(() => Balance.fromJson({...value, field: invalid}), throwsFormatException);
       }
     }
-    for (final field in ['date', 'recordType', 'recordAmountMinor']) {
+    for (final field in ['receipt', 'date', 'recordType', 'recordAmountMinor']) {
       expect(() => BalanceBreakdown.fromJson({...line}..remove(field)), throwsFormatException);
     }
     for (final date in ['2026-02-29', '2026-13-01', '2026-1-01']) {
@@ -74,6 +122,30 @@ void main() {
     expect(() => BalanceBreakdown.fromJson({...line, 'recordAmountMinor': 9000}), throwsFormatException);
     expect(() => Balance.fromJson({...value, 'obsolete': '0'}), throwsFormatException);
   });
+  test('receipt association is required nullable response-only metadata on every record kind', () {
+    const summary = {'receiptId': 'receipt-id', 'title': '会议 <b>Market</b>'};
+    final transfer = expenseJson()..['tag'] = 'TransferRecord'..['transferTo'] = _user
+      ..remove('splitMode')..remove('splits');
+    for (final json in [expenseJson(), incomeJson(), transfer]) {
+      expect(LedgerRecord.fromJson(json).receipt, isNull);
+      expect(() => LedgerRecord.fromJson({...json}..remove('receipt')), throwsFormatException);
+      final record = LedgerRecord.fromJson({...json, 'receipt': summary});
+      expect(record.receipt!.receiptId, 'receipt-id');
+      expect(record.receipt!.title, summary['title']);
+      final draft = record is SplitRecord ? SplitRecordDraft.fromRecord(record).toJson()
+        : TransferDraft.fromRecord(record as TransferRecord).toJson();
+      expect(draft.containsKey('receipt'), isFalse);
+      for (final invalid in <Object>[false, [], {'receiptId': 'receipt-id'},
+          {'receiptId': 'receipt-id', 'title': null}, {...summary, 'note': 'private'}]) {
+        expect(() => LedgerRecord.fromJson({...json, 'receipt': invalid}), throwsFormatException);
+      }
+    }
+    final line = {'recordId': 'record-id', 'receipt': summary, 'title': 'Apples',
+      'date': '2026-10-21', 'recordType': 'expense', 'recordAmountMinor': '1000', 'amountMinor': '0'};
+    expect(BalanceBreakdown.fromJson(line).receipt!.title, summary['title']);
+    expect(BalanceBreakdown.fromJson({...line, 'receipt': null}).receipt, isNull);
+  });
+
   test('record notes are required nullable text while draft notes may be omitted', () {
     const note = '  Invoice 42\n会议 <b>plain</b>  ';
     final transfer = expenseJson()

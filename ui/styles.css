@@ -81,6 +81,7 @@ input, select, textarea {
 input:enabled, select:enabled, textarea:enabled { border-color: var(--control-border); }
 input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 textarea { min-height: 144px; resize: vertical; }
+[data-receipt-note] { min-height: 64px; }
 input[readonly], textarea[readonly] { background: var(--bg); }
 input[type="checkbox"], input[type="radio"] { width: 24px; min-height: 24px; height: 24px; flex: 0 0 24px; accent-color: var(--primary); }
 label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { flex-direction: row; align-items: center; min-height: 44px; }
@@ -164,6 +165,7 @@ a.stat-card:hover { border-color: var(--primary); background: var(--surface); co
 .field-label { display: block; color: var(--muted); font-size: 0.875rem; font-weight: 600; }
 .entity-field > p { margin: 0; }
 .record-note, .receipt-note { white-space: pre-wrap; overflow-wrap: anywhere; }
+.receipt-association { min-height: 48px; max-width: 100%; border-color: var(--control-border); white-space: normal; overflow-wrap: anywhere; text-align: left; }
 .record-note-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; line-height: 1.5; max-height: 3em; overflow: hidden; }
 .group-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
 .group-tabs a, .group-tabs button { display: inline-flex; align-items: center; min-height: 44px; padding: 8px 16px; border: 1px solid transparent; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 600; }
@@ -205,6 +207,9 @@ dialog[open] { display: flex; flex-direction: column; }
 dialog > form { display: flex; flex-direction: column; min-height: 0; max-height: inherit; width: 100%; gap: 0; }
 .dialog-header { display: flex; flex: 0 0 auto; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 24px; border-bottom: 1px solid var(--border); }
 .dialog-header h1, .dialog-header h2 { margin: 0; }
+.receipt-source-dialog .dialog-header { flex-wrap: wrap; gap: 8px; }
+.receipt-source-dialog .dialog-header > button { flex-shrink: 0; }
+.receipt-source-dialog .dialog-header h2 { min-width: 0; }
 .dialog-body { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; gap: 16px; overflow-y: auto; padding: 24px; overscroll-behavior: contain; }
 .dialog-body > * { flex-shrink: 0; }
 .dialog-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 16px 24px; border-top: 1px solid var(--border); background: var(--surface); }
@@ -218,6 +223,46 @@ dialog > form { display: flex; flex-direction: column; min-height: 0; max-height
 .picker-result { flex-direction: column; align-items: flex-start; }
 #confirm-dialog { max-width: 480px; }
 #editor-dialog form { max-width: 720px; }
+#editor-dialog.receipt-editor { max-width: 1200px; }
+#editor-dialog.receipt-editor form { max-width: none; }
+#editor-dialog.receipt-editor .dialog-body { scroll-padding-block: 24px; }
+#editor-dialog.receipt-editor :is(input, select, textarea) { scroll-margin-block: 24px; }
+.receipt-review-fields [aria-invalid="true"] { border-color: var(--danger); }
+.receipt-review-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; }
+.receipt-preview { min-width: 0; }
+.receipt-photo-options { width: 100%; }
+.receipt-photo-actions { display: flex; flex-direction: column; gap: 8px; }
+.receipt-photo-action { width: 100%; min-height: 44px; flex-direction: column; align-items: stretch; gap: 4px; border-color: var(--control-border); text-align: left; }
+.receipt-photo-action-description { font-size: 0.875rem; font-weight: 400; }
+.receipt-photo-action-remove { margin-top: 8px; }
+.receipt-image-scroll { max-width: 100%; height: min(360px, 55dvh); overflow: auto; overflow-anchor: none; border: 1px solid var(--control-border); border-radius: 8px; overscroll-behavior: contain; }
+.receipt-image-scroll img { display: block; width: 100%; max-width: 100%; height: auto; }
+.receipt-camera-preview { display: block; width: 100%; max-height: 55dvh; object-fit: contain; min-width: 0; }
+.receipt-review-item { padding: 16px; }
+.receipt-import { container-type: inline-size; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.receipt-source-dialog { max-width: 1000px; }
+.receipt-ai-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.ai-summary { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin: 0; }
+.ai-summary dt { font-weight: 600; }
+.ai-summary dd { margin: 0 0 12px; font-variant-numeric: tabular-nums; }
+.ai-table-scroll { max-width: 100%; overflow: auto; border: 1px solid var(--control-border); border-radius: 8px; overscroll-behavior: contain; }
+.ai-table { width: 100%; border-collapse: collapse; text-align: left; font-variant-numeric: tabular-nums; }
+.ai-table caption { text-align: left; font-weight: 600; padding: 16px; background: var(--surface); }
+.ai-table th, .ai-table td { padding: 12px; min-width: 7rem; vertical-align: top; border-top: 1px solid var(--border); }
+.ai-table th { background: var(--bg); }
+@media (min-width: 600px) {
+  .ai-summary { grid-template-columns: minmax(10rem, 1fr) minmax(0, 2fr); gap: 8px 24px; }
+  .ai-summary dd { margin: 0; }
+}
+@container (min-width: 1000px) {
+  .receipt-review-layout { grid-template-columns: minmax(0, 35fr) minmax(0, 65fr); }
+}
+@media (max-width: 599px) {
+  .receipt-review-layout { gap: 16px; }
+  .receipt-review-item { padding: 12px; }
+  .receipt-import .row-actions > button { flex: 1 1 auto; }
+  .receipt-source-dialog .dialog-body { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+}
 
 @media (min-width: 600px) and (max-width: 1023px) {
   #dashboard-view { grid-template-columns: minmax(0, 1fr); }

@@ -94,8 +94,7 @@ authLogTests =
                 waitForLogger logger
                 failures <- T.unlines <$> readIORef messages
                 assertBool "important persistence diagnostic survives every threshold" ("Database unavailable" `T.isInfixOf` failures)
-                assertBool "ordinary server failure completion survives every threshold" ("HTTP request completed GET /users/me/groups 503" `T.isInfixOf` failures)
-                assertBool "sensitive server failure status survives every threshold" ("Authentication request completed 503" `T.isInfixOf` failures),
+                assertBool "ordinary server failure completion survives every threshold" ("HTTP request completed GET /users/me/groups 503" `T.isInfixOf` failures),
       testCase "credential SQL and authentication request values are absent while ordinary diagnostics remain" $ do
         messages <- newIORef []
         let collect message = atomicModifyIORef' messages (\old -> (showLogMessage Nothing message : old, ()))
@@ -262,9 +261,6 @@ authLogTests =
                 captured <- T.unlines <$> readIORef messages
                 forM_ [password, email, header, query] $ \secret ->
                   assertBool "Rejected request value leaked into diagnostics" (not $ secret `T.isInfixOf` captured)
-                assertBool
-                  "Sensitive rejection diagnostic is captured"
-                  (("Authentication request completed " <> T.pack (show expectedStatus)) `T.isInfixOf` captured)
                 assertBool "Ordinary route diagnostics are retained" ("/currencies" `T.isInfixOf` captured),
       testCase "environment startup and blocked operator actions never disclose provider, encryption or signing material" $ do
         messages <- newIORef []

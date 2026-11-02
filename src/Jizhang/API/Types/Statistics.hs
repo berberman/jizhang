@@ -13,6 +13,7 @@
 module Jizhang.API.Types.Statistics where
 
 import Data.Aeson
+import qualified Data.Aeson.KeyMap as KM
 import Data.Data (Typeable)
 import Data.Swagger
 import Data.Text (Text)
@@ -22,6 +23,7 @@ import GHC.Generics (Generic)
 import Jizhang.API.Types.Group
 import Jizhang.API.Types.Money
 import Jizhang.API.Types.Record
+import Jizhang.API.Types.ReceiptSummary (ReceiptSummary)
 import Jizhang.API.Types.User
 import Servant
 
@@ -160,7 +162,19 @@ data PersonalExpense = PersonalExpense
   { recordId :: !RecordId,
     title :: !Text,
     date :: !Day,
-    amountMinor :: !MinorAmount
+    amountMinor :: !MinorAmount,
+    receipt :: !(Maybe ReceiptSummary)
   }
   deriving stock (Show, Eq, Generic, Typeable)
-  deriving anyclass (ToJSON, FromJSON, ToSchema)
+  deriving anyclass (ToJSON)
+
+instance FromJSON PersonalExpense where
+  parseJSON input = do
+    withObject "PersonalExpense" (\o -> if KM.member "receipt" o then pure () else fail "Missing receipt field") input
+    genericParseJSON defaultOptions input
+
+instance ToSchema PersonalExpense where
+  declareNamedSchema proxy = do
+    NamedSchema responseName responseSchema <- genericDeclareNamedSchema defaultSchemaOptions proxy
+    pure $ NamedSchema responseName responseSchema
+      { _schemaRequired = "receipt" : filter (/= "receipt") (_schemaRequired responseSchema) }

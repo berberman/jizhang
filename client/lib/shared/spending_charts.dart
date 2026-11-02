@@ -97,10 +97,11 @@ class _SpendingMembersChartState extends State<SpendingMembersChart> {
 }
 
 class SpendingExpenseBars extends StatelessWidget {
-  const SpendingExpenseBars({super.key, required this.spending, required this.subjectLabel, required this.onExpense});
+  const SpendingExpenseBars({super.key, required this.spending, required this.subjectLabel, required this.onExpense, required this.onReceipt});
   final CurrencySpending spending;
   final String subjectLabel;
   final ValueChanged<PersonalExpense> onExpense;
+  final ValueChanged<ReceiptSummary> onReceipt;
 
   @override
   Widget build(BuildContext context) {
@@ -132,6 +133,8 @@ class SpendingExpenseBars extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Text('${i + 1}. ${s.topExpenses[i].title}'),
+            if (s.topExpenses[i].receipt case final receipt?) Align(alignment: Alignment.centerLeft,
+              child: ReceiptAssociationLink(receipt: receipt, onPressed: () => onReceipt(receipt))),
             Text('${s.topExpenses[i].date} · ${s.currency.format(s.topExpenses[i].amountMinor)} · ${percent(s.topExpenses[i].amountMinor)}'),
             bar(s.topExpenses[i].amountMinor),
             Align(alignment: Alignment.centerLeft, child: action(s.topExpenses[i])),
@@ -149,7 +152,11 @@ class SpendingExpenseBars extends StatelessWidget {
       ExpansionTile(key: const PageStorageKey('spending-expense-data'), title: const Text('View data'), tilePadding: EdgeInsets.zero, children: [
         _SpendingDataTable(storageId: 'expenses', headings: const ['Rank', 'Expense', 'Date', 'Allocated share', 'Percent', 'Action'], numericColumns: const {0, 3, 4}, rows: [
           if (hasSpending) for (var i = 0; i < s.topExpenses.length; i++) [
-            '${i + 1}', s.topExpenses[i].title, s.topExpenses[i].date,
+            '${i + 1}', SizedBox(width: 240, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              SelectableText(s.topExpenses[i].title, key: PageStorageKey('expenses:cell:$i:1')),
+              if (s.topExpenses[i].receipt case final receipt?)
+                ReceiptAssociationLink(receipt: receipt, onPressed: () => onReceipt(receipt)),
+            ])), s.topExpenses[i].date,
             s.currency.format(s.topExpenses[i].amountMinor), percent(s.topExpenses[i].amountMinor), action(s.topExpenses[i]),
           ],
           if (hasSpending && s.otherExpensesMinor > BigInt.zero) ['', 'Other', '', s.currency.format(s.otherExpensesMinor), percent(s.otherExpensesMinor), ''],

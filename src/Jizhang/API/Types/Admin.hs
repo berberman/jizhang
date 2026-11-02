@@ -14,7 +14,7 @@ module Jizhang.API.Types.Admin where
 
 import Control.Lens ((^.))
 import qualified Crypto.JWT as Jose
-import Data.Aeson (FromJSON (..), Result (..), ToJSON (..), Value (String), defaultOptions, fromJSON, genericParseJSON, rejectUnknownFields, withObject, withText, (.:))
+import Data.Aeson (FromJSON (..), Result (..), ToJSON (..), Value (String), defaultOptions, fromJSON, genericToJSON, omitNothingFields, withObject, withText, (.:), (.:?))
 import qualified Data.Aeson.KeyMap as KM
 import Data.Data (Typeable)
 import qualified Data.Map.Strict as M
@@ -26,6 +26,8 @@ import Data.UUID (UUID)
 import GHC.Generics (Generic)
 import Jizhang.API.Types.Money
 import Jizhang.API.Types.Record (ExpenseRecordRequest)
+import Jizhang.API.Types.ReceiptAI (ReceiptSourceInput)
+import Jizhang.API.Types.ReceiptSummary (normalizeReceiptTitle)
 import Jizhang.API.Types.User (UserId)
 import Servant.Auth.JWT (FromJWT (..), ToJWT)
 
@@ -151,21 +153,31 @@ instance FromJSON AdminCreateGroupRequest where
           <*> (if KM.member "currencyMode" o then o .: "currencyMode" else pure SingleCurrency)
           <*> (if KM.member "defaultCurrency" o then o .: "defaultCurrency" else pure (CurrencyCode "USD"))
 
--- | Upload expense records on behalf of an application user. All keys are
--- required; unknown keys are rejected, while receipt-wide validation is deferred.
+-- | Upload expense records on behalf of an application user. Title, note and
+-- records are required; unknown keys are rejected and source is optional.
 data AdminCreateReceiptRequest = AdminCreateReceiptRequest
   { -- | Application-user uploader UUID, distinct from the authenticated operator.
     uploadedByUserId :: !UserId,
+    title :: !Text,
     -- | Non-null receipt note; the decoder permits empty text.
     note :: !Text,
     -- | Expense-only submissions using bounded exact money codecs.
-    records :: ![ExpenseRecordRequest]
+    records :: ![ExpenseRecordRequest],
+    source :: !(Maybe ReceiptSourceInput)
   }
-  deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving anyclass (ToJSON, ToSchema)
+  deriving stock (Eq, Ord, Generic, Typeable)
+  deriving anyclass (ToSchema)
+
+instance ToJSON AdminCreateReceiptRequest where
+  toJSON = genericToJSON defaultOptions {omitNothingFields = True}
 
 instance FromJSON AdminCreateReceiptRequest where
-  parseJSON = genericParseJSON defaultOptions {rejectUnknownFields = True}
+  parseJSON = withObject "AdminCreateReceiptRequest" $ \o -> do
+    if any (`notElem` ["uploadedByUserId", "title", "note", "records", "source"]) (KM.keys o)
+      then fail "Unknown receipt field"
+      else do
+        receiptTitle <- o .: "title" >>= either (fail . T.unpack) pure . normalizeReceiptTitle
+        AdminCreateReceiptRequest <$> o .: "uploadedByUserId" <*> pure receiptTitle <*> o .: "note" <*> o .: "records" <*> o .:? "source"
 
 -- | Operator JWT data, not a public user or application session. Decoding claims
 -- requires exp and the servant-auth dat payload; expiry verification is external.

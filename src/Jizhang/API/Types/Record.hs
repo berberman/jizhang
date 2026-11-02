@@ -11,15 +11,20 @@
 -- Monetary strings are exact; these decoders do not perform ledger validation.
 module Jizhang.API.Types.Record where
 
+import Control.Lens (has, ix)
 import Data.Aeson (FromJSON (..), ToJSON, defaultOptions, genericParseJSON, rejectUnknownFields, withObject)
+import qualified Data.Aeson.KeyMap as KM
 import Data.Data (Typeable)
-import Data.Swagger (ToParamSchema, ToSchema)
+import Data.Swagger (ToParamSchema, ToSchema (..))
+import qualified Data.Swagger as Swagger
+import Data.Swagger.Declare (declare, runDeclare)
 import Data.Text (Text)
 import Data.Time (Day, UTCTime)
 import Data.UUID (UUID)
 import GHC.Generics (Generic)
 import Jizhang.API.Types.Group
 import Jizhang.API.Types.Money
+import Jizhang.API.Types.ReceiptSummary (ReceiptSummary)
 import Jizhang.API.Types.User
 import Servant (FromHttpApiData, ToHttpApiData)
 
@@ -140,7 +145,7 @@ instance FromJSON TransferRecordRequest where
 
 -- | Stored expense, income or payment with public user projections. JSON tags
 -- are "ExpenseRecord", "IncomeRecord" and "TransferRecord", not lowercase kinds.
--- Notes and rates encode null for Nothing; missing nullable fields also decode.
+-- Notes and rates encode null for Nothing; receipt is required even when null.
 data Record
   = ExpenseRecord
       { recordId :: !RecordId,
@@ -162,6 +167,7 @@ data Record
         -- | Server creation timestamp, not the accounting date.
         createdAt :: !UTCTime,
         groupId :: !GroupId,
+        receipt :: !(Maybe ReceiptSummary),
         splitMode :: !SplitMode,
         -- | Inputs plus computed allocations in both currencies.
         splits :: ![RecordSplit]
@@ -180,6 +186,7 @@ data Record
         date :: !Day,
         createdAt :: !UTCTime,
         groupId :: !GroupId,
+        receipt :: !(Maybe ReceiptSummary),
         splitMode :: !SplitMode,
         splits :: ![RecordSplit]
       }
@@ -197,10 +204,28 @@ data Record
         transferTo :: !User,
         date :: !Day,
         createdAt :: !UTCTime,
-        groupId :: !GroupId
+        groupId :: !GroupId,
+        receipt :: !(Maybe ReceiptSummary)
       }
   deriving stock (Show, Eq, Ord, Generic, Typeable)
-  deriving anyclass (ToJSON, ToSchema)
+  deriving anyclass (ToJSON)
+
+instance ToSchema Record where
+  declareNamedSchema proxy = do
+    let (definitions, Swagger.NamedSchema responseName schema) = runDeclare (Swagger.genericDeclareNamedSchema Swagger.defaultSchemaOptions proxy) mempty
+    declare (fmap requireReceipt definitions)
+    pure $ Swagger.NamedSchema responseName (requireReceipt schema)
+    where
+      requireReceipt schema = schema
+        { Swagger._schemaRequired = if has (Swagger.properties . ix "receipt") schema
+            then "receipt" : filter (/= "receipt") (Swagger._schemaRequired schema)
+            else Swagger._schemaRequired schema,
+          Swagger._schemaProperties = fmap descend (Swagger._schemaProperties schema)
+        }
+      descend (Swagger.Inline schema) = Swagger.Inline (requireReceipt schema)
+      descend reference = reference
 
 instance FromJSON Record where
-  parseJSON = genericParseJSON defaultOptions {rejectUnknownFields = True}
+  parseJSON input = do
+    withObject "Record" (\o -> if KM.member "receipt" o then pure () else fail "Missing receipt field") input
+    genericParseJSON defaultOptions {rejectUnknownFields = True} input

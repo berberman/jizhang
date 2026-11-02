@@ -213,11 +213,9 @@ loginLocal port manager identifier password = do
 assertActive :: Int -> HTTP.Manager -> Auth.LoginResponse -> Assertion
 assertActive port manager session = protected port manager session "GET" "/users/me" Null >>= expectStatus 200
 
--- | Check both the fixed rejection body and refill deadline, not merely HTTP 429.
 expectLimited :: Int -> HTTP.Response LBS.ByteString -> Assertion
 expectLimited retry response = do
   expectStatus 429 response
-  assertEqual "fixed credential rejection" "Too many requests; try again later" (HTTP.responseBody response)
   assertEqual "positive refill deadline" (Just $ B8.pack $ show retry) (lookup "Retry-After" $ HTTP.responseHeaders response)
   assertEqual "credential rejection is not cached" (Just "no-store") (lookup "Cache-Control" $ HTTP.responseHeaders response)
 

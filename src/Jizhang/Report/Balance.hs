@@ -83,17 +83,18 @@ calculateBalance !users = M.map (M.map mergeBreakdown) . foldl' updateCurrency M
         )
         (uid target)
     impact BalanceBreakdown {amountMinor} = amountMinor
-    entry rid label day kind gross delta =
+    entry rid label day association kind gross delta =
       BalanceBreakdown
         { recordId = rid,
           title = label,
           date = day,
           recordType = kind,
           recordAmountMinor = MinorAmount gross,
-          amountMinor = MinorAmount delta
+          amountMinor = MinorAmount delta,
+          receipt = association
         }
-    updateBalance ExpenseRecord {recordId, title, date, settlementAmountMinor = MinorAmount total, paidBy, splits} mp =
-      let contribution = entry recordId title date "expense" total
+    updateBalance ExpenseRecord {recordId, title, date, receipt, settlementAmountMinor = MinorAmount total, paidBy, splits} mp =
+      let contribution = entry recordId title date receipt "expense" total
        in foldl'
             ( \balances (RecordSplit person _ _ allocation@(MinorAmount allocated)) ->
                 adjust
@@ -109,8 +110,8 @@ calculateBalance !users = M.map (M.map mergeBreakdown) . foldl' updateCurrency M
                 mp
             )
             splits
-    updateBalance TransferRecord {recordId, title, date, settlementAmountMinor = MinorAmount total, paidBy, transferTo} mp =
-      let contribution = entry recordId title date "transfer" total
+    updateBalance TransferRecord {recordId, title, date, receipt, settlementAmountMinor = MinorAmount total, paidBy, transferTo} mp =
+      let contribution = entry recordId title date receipt "transfer" total
        in adjust
             transferTo
             (contribution (-total))
@@ -121,8 +122,8 @@ calculateBalance !users = M.map (M.map mergeBreakdown) . foldl' updateCurrency M
                 (\balance@Balance {paymentsSentMinor} -> balance {paymentsSentMinor = add paymentsSentMinor (MinorAmount total)})
                 mp
             )
-    updateBalance IncomeRecord {recordId, title, date, settlementAmountMinor = MinorAmount total, receivedBy, splits} mp =
-      let contribution = entry recordId title date "income" total
+    updateBalance IncomeRecord {recordId, title, date, receipt, settlementAmountMinor = MinorAmount total, receivedBy, splits} mp =
+      let contribution = entry recordId title date receipt "income" total
        in foldl'
             ( \balances (RecordSplit person _ _ allocation@(MinorAmount allocated)) ->
                 adjust

@@ -7,6 +7,7 @@
 module Jizhang.API.Record.Projection
   ( storedSplitMode,
     storedRecordMoney,
+    ReceiptSummaryMap,
     recordToSplitRecord,
     recordToTransferRecord,
     recordToApiRecord
@@ -15,18 +16,29 @@ where
 
 import Control.Monad (unless)
 import Data.Coerce (coerce)
+import qualified Data.Map.Strict as M
 import Data.Maybe (isNothing)
 import Data.Text (Text)
 import Data.UUID (UUID)
 import Jizhang.API.Types.Group (GroupId (GroupId))
 import Jizhang.API.Types.Money (CurrencyCode (CurrencyCode), CurrencyInfo, ExchangeQuoteId (ExchangeQuoteId), ExchangeRate (ExchangeRate), MinorAmount (MinorAmount), SplitMode (..), minorAmountInteger)
 import Jizhang.API.Types.Record (Record (..), RecordId (RecordId), RecordSplit (..))
+import Jizhang.API.Types.ReceiptSummary (ReceiptSummary)
 import Jizhang.API.Types.User (User (User))
 import Jizhang.API.User.Projection (UserMap, storedUser)
 import Jizhang.Currency (CurrencyCatalog, lookupCurrency)
 import qualified Jizhang.Database.Record as D (SplitRecordKind (..), splitRecordKindText)
 import qualified Jizhang.Database.Schema as S
 import qualified Jizhang.Money as Money
+
+type ReceiptSummaryMap = M.Map UUID ReceiptSummary
+
+storedReceiptSummary :: ReceiptSummaryMap -> S.Record -> Either Text (Maybe ReceiptSummary)
+storedReceiptSummary summaries record = case S.unReceiptId (S._recordReceipt record) of
+  Nothing -> Right Nothing
+  Just receiptId -> case M.lookup receiptId summaries of
+    Just receipt -> Right (Just receipt)
+    Nothing -> Left "Invalid stored receipt association"
 
 -- | Split records require a recognized stored mode; missing modes are corruption.
 storedSplitMode :: Maybe Text -> Either Text SplitMode
@@ -64,8 +76,9 @@ storedRecordMoney catalog record = do
   pure (original, target, amount, settlement, fx)
 
 -- | Require valid participants, split weights and matching original/settlement sums.
-recordToSplitRecord :: D.SplitRecordKind -> CurrencyCatalog -> UserMap -> S.Record -> [S.RecordSplit] -> Either Text Record
-recordToSplitRecord kind catalog users record ssplits = do
+recordToSplitRecord :: D.SplitRecordKind -> CurrencyCatalog -> UserMap -> ReceiptSummaryMap -> S.Record -> [S.RecordSplit] -> Either Text Record
+recordToSplitRecord kind catalog users summaries record ssplits = do
+  receipt <- storedReceiptSummary summaries record
   (currency, settlementCurrency, amountMinor, settlementAmountMinor, exchangeRate) <- storedRecordMoney catalog record
   unless (S._recordKind record == D.splitRecordKindText kind && isNothing (S.unUserId $ S._transferTo record)) $
     Left "Invalid stored split record kind or recipient"
@@ -98,8 +111,9 @@ recordToSplitRecord kind catalog users record ssplits = do
       pure RecordSplit {..}
 
 -- | Require a transfer recipient and reject split-mode or exchange-rate metadata.
-recordToTransferRecord :: CurrencyCatalog -> UserMap -> UUID -> S.Record -> Either Text Record
-recordToTransferRecord catalog users recipient record = do
+recordToTransferRecord :: CurrencyCatalog -> UserMap -> ReceiptSummaryMap -> UUID -> S.Record -> Either Text Record
+recordToTransferRecord catalog users summaries recipient record = do
+  receipt <- storedReceiptSummary summaries record
   (currency, settlementCurrency, amountMinor, settlementAmountMinor, exchangeRate) <- storedRecordMoney catalog record
   unless (S._recordKind record == "transfer" && isNothing exchangeRate && isNothing (S._splitMode record) && S.unUserId (S._transferTo record) == Just recipient) $
     Left "Invalid stored payment"
@@ -114,12 +128,12 @@ recordToTransferRecord catalog users recipient record = do
   pure TransferRecord {..}
 
 -- | Dispatch by stored kind, returning diagnostics rather than fabricating a variant.
-recordToApiRecord :: CurrencyCatalog -> UserMap -> S.Record -> [S.RecordSplit] -> Either Text Record
-recordToApiRecord catalog users record ssplits =
+recordToApiRecord :: CurrencyCatalog -> UserMap -> ReceiptSummaryMap -> S.Record -> [S.RecordSplit] -> Either Text Record
+recordToApiRecord catalog users summaries record ssplits =
   case S._recordKind record of
-    "expense" -> recordToSplitRecord D.ExpenseKind catalog users record ssplits
-    "income" -> recordToSplitRecord D.IncomeKind catalog users record ssplits
+    "expense" -> recordToSplitRecord D.ExpenseKind catalog users summaries record ssplits
+    "income" -> recordToSplitRecord D.IncomeKind catalog users summaries record ssplits
     "transfer" -> case S.unUserId (S._transferTo record) of
-      Just recipient -> recordToTransferRecord catalog users recipient record
+      Just recipient -> recordToTransferRecord catalog users summaries recipient record
       Nothing -> Left "Stored payment recipient is missing"
     _ -> Left "Invalid stored record kind"

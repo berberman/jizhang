@@ -57,7 +57,7 @@ calculateSpendingStatistics gid mode base lo hi step person people records =
     empty info = Acc info zero M.empty M.empty []
     initial = case mode of SingleCurrency -> M.singleton (code base) (empty base); MultiCurrency -> M.empty
     accumulated = foldl' addRecord initial records
-    addRecord acc ExpenseRecord {recordId, title, date, settlementCurrency = info, settlementAmountMinor = MinorAmount total, paidBy, splits}
+    addRecord acc ExpenseRecord {recordId, title, date, receipt, settlementCurrency = info, settlementAmountMinor = MinorAmount total, paidBy, splits}
       | date >= lo && date <= hi = M.alter (Just . update . fromMaybe (empty info)) (code info) acc
       where
         subjectShare = foldl' (\n (RecordSplit u _ _ (MinorAmount amount)) -> if userKey u == userKey person then n + amount else n) 0 splits
@@ -73,7 +73,7 @@ calculateSpendingStatistics gid mode base lo hi step person people records =
               allMembers = foldl' (\mp (RecordSplit u _ _ (MinorAmount amount)) -> M.insertWith (\(!p, !s) (!q, !t) -> (p + q, s + t)) (userKey u) (0, amount) mp) paidMembers splits
               -- Rank saved subject allocations, not record gross amounts; zero shares have no bar.
               -- Keeping only five after each insertion is safe: discarded entries cannot re-enter a fixed ordering.
-              personal = if subjectShare > 0 then take 5 $ sortOn expenseOrder (PersonalExpense recordId title date (MinorAmount subjectShare) : top) else top
+              personal = if subjectShare > 0 then take 5 $ sortOn expenseOrder (PersonalExpense recordId title date (MinorAmount subjectShare) receipt : top) else top
               -- Use the clipped interval start as the key, matching bucketIntervals at partial weeks/months.
            in Acc currency (plus totals delta) (M.insertWith plus (max lo $ calendarStart step date) delta buckets) allMembers personal
     addRecord acc IncomeRecord {date, settlementCurrency = info, settlementAmountMinor = MinorAmount income}
@@ -83,7 +83,7 @@ calculateSpendingStatistics gid mode base lo hi step person people records =
         update (Acc currency totals buckets members top) =
           Acc currency (plus totals delta) (M.insertWith plus (max lo $ calendarStart step date) delta buckets) members top
     addRecord acc _ = acc
-    expenseOrder (PersonalExpense rid _ day (MinorAmount amount)) = (Down amount, Down day, rid)
+    expenseOrder (PersonalExpense rid _ day (MinorAmount amount) _) = (Down amount, Down day, rid)
     section (Acc info (Totals total count income incomeCount paid share) bucketMap memberMap top) =
       CurrencySpending
         info
@@ -104,4 +104,4 @@ calculateSpendingStatistics gid mode base lo hi step person people records =
         )
         top
         -- The remainder includes every allocated expense omitted from the bounded top-five list.
-        (MinorAmount $ share - sum [amount | PersonalExpense _ _ _ (MinorAmount amount) <- top])
+        (MinorAmount $ share - sum [amount | PersonalExpense _ _ _ (MinorAmount amount) _ <- top])

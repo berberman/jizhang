@@ -134,7 +134,8 @@ class _ReportScreenState extends State<ReportScreen> {
                 const Divider(height: 16),
                 if (balance.breakdown.isEmpty) const Text('No record activity.')
                 else _BalanceRecords(lines: balance.breakdown, currency: currency,
-                  openingRecord: _openingRecord, onOpen: _openRecord),
+                  openingRecord: _openingRecord, onOpen: _openRecord,
+                  onReceipt: (receipt) => context.push<void>('/groups/${widget.groupId}/receipts/${receipt.receiptId}')),
               ],
             )),
           const SizedBox(height: 16),
@@ -229,11 +230,12 @@ class _RoleTotals extends StatelessWidget {
 }
 
 class _BalanceRecords extends StatefulWidget {
-  const _BalanceRecords({required this.lines, required this.currency, required this.openingRecord, required this.onOpen});
+  const _BalanceRecords({required this.lines, required this.currency, required this.openingRecord, required this.onOpen, required this.onReceipt});
   final List<BalanceBreakdown> lines;
   final CurrencyInfo currency;
   final String? openingRecord;
   final ValueChanged<BalanceBreakdown> onOpen;
+  final ValueChanged<ReceiptSummary> onReceipt;
   @override
   State<_BalanceRecords> createState() => _BalanceRecordsState();
 }
@@ -260,13 +262,17 @@ class _BalanceRecordsState extends State<_BalanceRecords> {
         key: const PageStorageKey('balance-record-scroll'),
         controller: _scroll, scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.only(bottom: 16),
-        child: DataTable(columns: const [
+        child: DataTable(dataRowMinHeight: 56, dataRowMaxHeight: double.infinity, columns: const [
           DataColumn(label: Text('Date')), DataColumn(label: Text('Type')),
           DataColumn(label: Text('Title')), DataColumn(label: Text('Record amount'), numeric: true),
           DataColumn(label: Text('Balance impact'), numeric: true), DataColumn(label: Text('Open record')),
         ], rows: [for (final line in widget.lines) DataRow(cells: [
           DataCell(Text(line.date)), DataCell(Text(_type(line))),
-          DataCell(SizedBox(width: 240, child: Text(line.title, maxLines: 2, overflow: TextOverflow.ellipsis))),
+          DataCell(SizedBox(width: 240, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(line.title),
+            if (line.receipt case final receipt?)
+              ReceiptAssociationLink(receipt: receipt, onPressed: () => widget.onReceipt(receipt)),
+          ]))),
           DataCell(SelectableText(widget.currency.format(line.recordAmountMinor))),
           DataCell(SelectableText(_impact(line))), DataCell(_action(line)),
         ])]),
@@ -276,6 +282,8 @@ class _BalanceRecordsState extends State<_BalanceRecords> {
       for (final line in widget.lines) Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Text('Date: ${line.date}'), Text('Type: ${_type(line)}'), Text('Title: ${line.title}'),
+          if (line.receipt case final receipt?) Align(alignment: Alignment.centerLeft,
+            child: ReceiptAssociationLink(receipt: receipt, onPressed: () => widget.onReceipt(receipt))),
           Text('Record amount: ${widget.currency.format(line.recordAmountMinor)}'),
           Text('Balance impact: ${_impact(line)}'),
           Align(alignment: Alignment.centerLeft, child: _action(line)), const Divider(),

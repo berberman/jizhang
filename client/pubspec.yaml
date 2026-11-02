@@ -28,3 +28,5 @@ flutter:
   assets:
     - web/jizhang-mark.svg
     - assets/legal/mit.txt
+    - web/vendor/libheif/LICENSES.txt
+    - web/vendor/libheif/SOURCE.txt

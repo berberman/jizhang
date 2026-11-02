@@ -123,6 +123,80 @@ rejects nonempty managed values even while OIDC is disabled. See
 [authentication operations](authentication.md#operator-management) for editing,
 provider testing, and account recovery.
 
+## Receipt image extraction
+
+Receipt extraction is disabled by default. Administrators control its enabled
+state independently from the effective credential. The model is fixed to
+`gpt-5.4-mini-2026-03-17` with low reasoning; no custom endpoint, automatic model
+fallback, or automatic retry is supported.
+
+| Setting | Behavior |
+| --- | --- |
+| `OPENAI_API_KEY` | Optional server-only credential override. Empty counts absent; nonempty values must have no whitespace/control characters and be at most 512 characters. Overrides, but never deletes, an encrypted database credential. |
+| `RECEIPT_AI_SECRET_KEY` | Optional independent canonical base64 32-byte key for encrypted administrator-managed credentials. Keep it stable, backed up, and distinct from JWT/OIDC keys. An explicitly empty or malformed value fails startup. |
+
+The encryption key is required before storing a credential through the admin
+API, not for environment-key operation, manual receipts, or reading usage.
+Changing it does not re-encrypt existing credentials. Without the matching key,
+a retained database credential is unavailable. Removing an environment override
+exposes the retained database configuration again.
+
+Compose forwards these variables only to the backend. Never put them in Flutter
+defines, web runtime configuration, URLs, browser storage, or source control. The
+local launcher inherits operator environment variables and does not generate an
+ephemeral receipt encryption key.
+
+The effective decoded image cap is the smaller of 5 MiB and three quarters of
+the bulk body cap after reserving 256 KiB for JSON/records/review. A zero result
+disables image import without disabling manual entry. JPEGs also have independent
+8192px dimension and 16-million-pixel limits. The entire final save remains
+subject to `REQUEST_BULK_BODY_MAX_BYTES`.
+
+Selecting an image is not an API call to OpenAI. Only explicit extraction sends
+it to OpenAI; `store=false` does not replace the provider's retention terms.
+Canceled or failed requests may still be charged. If recording an attempt fails,
+check usage before explicitly retrying. Usage estimates cover only calls made by
+this installation, not an OpenAI invoice or account-wide activity.
+
+Admin settings are available at `GET/PUT /admin/receipt-ai/settings`. Responses
+report credential presence/source only, never plaintext, ciphertext, or a masked
+suffix. Updates require the current revision and an explicit keep/replace/clear
+action. An environment-owned credential is read-only; keeping it can still
+enable or disable extraction. Local availability means configuration is usable,
+not that the provider has accepted the credential.
+
+`GET /admin/receipt-ai/usage` reports calls, all UTC daily/model buckets, and a
+server-paginated call list. `from` and `to` are inclusive UTC days; either may be
+omitted. Group/status filters apply before aggregates and pagination. Reported
+tokens exclude unknown usage. A missing or invalid counter remains unknown, and
+unknown-cost calls are visibly unpriced rather than assumed free.
+
+The initial immutable price snapshot is USD 0.75 per million input tokens,
+USD 0.075 per million cached input tokens, and USD 4.50 per million output tokens.
+Reasoning tokens are already part of output. Estimates use integer nano-USD
+arithmetic with nine decimal places; future prices do not rewrite old calls.
+
+
+The admin console's **Receipt AI** page provides settings and usage separately
+from financial reports. **Edit settings** opens a guarded draft with a masked
+**OpenAI API key** field; leaving it blank keeps the credential. **Clear saved
+key** stages removal after confirmation and takes effect only with **Save
+settings**, alongside the draft enabled value. Failed saves retain the draft;
+a revision conflict requires reloading current settings before another save.
+Closing the editor removes the replacement input. Environment-managed keys
+cannot be replaced or cleared here.
+
+The **Period** selector covers the last 7, 30, or 90 inclusive UTC days, all time,
+or custom dates. The default is 30 days. Presets retain group/status restrictions;
+the applied summary keeps those restrictions visible when **Filters** is closed.
+Invalid drafts leave previous results labeled as previous; pagination uses
+applied filters, never a partially edited draft. **Usage details** includes every
+matching daily/model bucket and all reported token categories. Per-call
+**Details** exposes tokens and provider time. Labeled local scrolling keeps
+wide tables within the page without discarding columns.
+
+
+
 ## Request and proxy overrides
 
 Protection is always enabled, including direct backend launches. Defaults live in
