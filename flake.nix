@@ -104,9 +104,6 @@
                   ) ./ui)
                   (final.lib.fileset.fileFilter (file: file.hasExt "json") ./data)
                   ./client/web/jizhang-mark.svg
-                  ./client/web/receipt-heif.js
-                  ./client/web/receipt-heif-worker.js
-                  ./client/web/vendor/libheif
                 ];
               }) { };
             }

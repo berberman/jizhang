@@ -88,25 +88,21 @@ require the existing proofs and retire application sessions.
 
 ## Receipt images
 
-New receipts support photo upload and browser camera capture. Upload accepts
-JPEG, PNG, WebP, and HEIC/HEIF, then shows the normalized JPEG that will be sent
-and retained. HEIC/HEIF decoding runs locally in a dedicated worker using the
-packaged libheif-js decoder; native browser HEIF support is not required. No photo
-is uploaded on selection. Camera access starts only after **Take photo** and
-requires HTTPS or localhost plus browser permission. Unsupported or denied camera
-access retains the upload and manual-entry alternatives.
+New receipts support photo upload and browser camera capture. Both web clients
+prepare JPEG, PNG, and WebP locally and show the normalized JPEG that will be sent
+and retained. HEIC/HEIF support is best effort: it depends on the browser's native
+image decoder and the selected file. If a HEIC/HEIF photo cannot be read, choose
+JPEG, PNG, or WebP, or use the camera. No remote conversion service is used.
+Selecting a photo prepares only a local JPEG preview and uploads nothing.
+Camera access starts only after **Take photo** and requires HTTPS or localhost
+plus browser permission. Unsupported or denied camera access retains the upload
+and manual-entry alternatives.
 
-Original files are limited to 20 MiB. HEIF preparation allows at most 16,384 pixels
-per edge and 64 million original pixels, with a 15-second deadline. Prepared
-images use a white background and JPEG quality 0.92, with a 2,560-pixel long edge
-and the server's configured byte cap. Invalid, oversized, unavailable-decoder, and
-timeout errors retain the previous photo and editable draft. Leaving the form
-terminates an active decoder.
-
-Deploy the complete web output, including `receipt-heif.js`, its worker, and
-`vendor/libheif/`. Decoder notices and rebuild instructions appear in
-**Open-source licenses**; the adjacent corresponding-source archive is included
-with the web distribution. See [distribution requirements](../docs/licenses.md).
+Original files are limited to 20 MiB. Prepared images use a white background and
+JPEG quality 0.92, with a 2,560-pixel long edge and the server's configured byte
+cap. Preparation failures retain the previous photo and editable draft. The
+backend continues to accept only JPEG source images; original HEIC/HEIF files
+are never submitted.
 
 Selecting a photo does not call the provider. **Read receipt** is the explicit
 billable action; review and correction are local and do not call it again.

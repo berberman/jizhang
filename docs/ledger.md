@@ -98,12 +98,14 @@ Receipts bundle expenses and can retain one normalized JPEG source image. A
 receipt summary shows its own loaded expense total, never a paginated global
 total. Receipt bundles and the five-column CSV import remain expense-only.
 
-Both web clients prepare JPEG, PNG, WebP, and HEIC/HEIF photos locally before
-submission. HEIC/HEIF uses the packaged worker decoder, not native browser
-decoding or a remote conversion service. Selecting a photo sends no extraction
-request; only Read receipt submits its normalized JPEG. Decoder failures retain
-the previous photo and draft. See [client image limits](../client/README.md#receipt-images)
-and [decoder source distribution](licenses.md#heicheif-decoder).
+Both web clients prepare JPEG, PNG, and WebP photos locally before submission.
+HEIC/HEIF preparation is best effort and depends on the browser's native image
+decoder and the selected file. If it fails, choose JPEG, PNG, or WebP, or use
+the camera. There is no remote conversion service. Selecting a photo creates
+only a local normalized JPEG preview and uploads nothing; only Read receipt
+submits that JPEG for extraction. The backend remains JPEG-only. Preparation
+failures retain the previous photo and draft. Originals are limited to 20 MiB;
+see [client image limits](../client/README.md#receipt-images) for normalization.
 
 Every receipt requires an editable title, independent of its optional note and
 expense titles. Titles trim surrounding whitespace, retain literal Unicode and

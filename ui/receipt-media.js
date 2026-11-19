@@ -137,29 +137,6 @@
       const type = imageType(new Uint8Array(await file.slice(0, 64).arrayBuffer()));
       if (!operation.active) return null;
       if (forbidden || !type) throw new Error('Choose a JPEG, PNG, WebP, or HEIC/HEIF photo. SVG, GIF, and PDF files are not supported.');
-      if (type === 'image/heif') {
-        if (!globalThis.JizhangReceiptHeif || typeof AbortController !== 'function')
-          throw new Error('HEIC/HEIF support could not be loaded. Reload and try again.');
-        const controller = new AbortController(); const abort = () => controller.abort();
-        operation.cleanup.add(abort);
-        let bytes, canvas, clearCanvas;
-        try {
-          bytes = await file.arrayBuffer();
-          if (!operation.active) return null;
-          canvas = await globalThis.JizhangReceiptHeif.decode(bytes, { signal: controller.signal });
-          clearCanvas = () => { canvas.width = 0; canvas.height = 0; };
-          operation.cleanup.add(clearCanvas);
-          if (!operation.active) return null;
-          return await this.encode(canvas, canvas.width, canvas.height, maxBytes, operation);
-        } catch (error) {
-          if (!operation.active || error?.name === 'AbortError') return null;
-          throw error;
-        } finally {
-          operation.cleanup.delete(abort); abort(); bytes = null;
-          if (clearCanvas) { operation.cleanup.delete(clearCanvas); clearCanvas(); }
-          canvas = null;
-        }
-      }
       const url = this.ownedUrl(new Blob([file], { type }));
       const image = new Image();
       const release = () => { image.onload = null; image.onerror = null; image.removeAttribute('src'); this.releaseImageUrl(url); };
@@ -169,7 +146,9 @@
           cancelDecode = () => { release(); resolve(); };
           operation.cleanup.add(cancelDecode);
           image.onload = () => resolve();
-          image.onerror = () => reject(new Error('This browser could not read that photo. Choose a JPEG or PNG image instead.'));
+          image.onerror = () => reject(new Error(type === 'image/heif'
+            ? 'This browser could not read this HEIC/HEIF photo. Choose a JPEG, PNG, or WebP image, or take a photo instead.'
+            : 'This browser could not read that photo. Choose a JPEG, PNG, or WebP image, or take a photo instead.'));
           // Browser image decoding applies the photo orientation before drawing.
           image.src = url;
         });

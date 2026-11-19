@@ -14,12 +14,6 @@ build-type:      Simple
 extra-doc-files: CHANGELOG.md
 data-files:
   client/web/jizhang-mark.svg
-  client/web/receipt-heif-worker.js
-  client/web/receipt-heif.js
-  client/web/vendor/libheif/corresponding-source.tar.gz
-  client/web/vendor/libheif/libheif-bundle.js
-  client/web/vendor/libheif/LICENSES.txt
-  client/web/vendor/libheif/SOURCE.txt
   data/currencies.json
   data/receipt-extraction.json
   sql/*.sql

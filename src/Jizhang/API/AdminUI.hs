@@ -17,7 +17,7 @@ import qualified Data.Text.Lazy as LT
 import qualified Data.Text.Lazy.Encoding as LTE
 import Data.Version (showVersion)
 import Jizhang.API.App (MyHandler)
-import Network.HTTP.Media ((//), (/:))
+import Network.HTTP.Media ((//))
 import Paths_jizhang (getDataDir, getDataFileName, version)
 import Servant
 import System.FilePath ((</>))
@@ -29,10 +29,6 @@ data CSS
 data JavaScript
 
 data SVG
-
-data NoticeText
-
-data Gzip
 
 instance Accept HTML where
   contentType _ = "text" // "html"
@@ -46,12 +42,6 @@ instance Accept JavaScript where
 instance Accept SVG where
   contentType _ = "image" // "svg+xml"
 
-instance Accept NoticeText where
-  contentType _ = "text" // "plain" /: ("charset", "utf-8")
-
-instance Accept Gzip where
-  contentType _ = "application" // "gzip"
-
 instance MimeRender HTML LBS.ByteString where
   mimeRender _ = id
 
@@ -64,12 +54,6 @@ instance MimeRender JavaScript LBS.ByteString where
 instance MimeRender SVG LBS.ByteString where
   mimeRender _ = id
 
-instance MimeRender NoticeText LBS.ByteString where
-  mimeRender _ = id
-
-instance MimeRender Gzip LBS.ByteString where
-  mimeRender _ = id
-
 -- | Expose only the listed assets, not an arbitrary request-selected filesystem path.
 type AdminUIAPI =
   "admin-ui" :> Get '[HTML] LBS.ByteString
@@ -79,12 +63,6 @@ type AdminUIAPI =
     :<|> "admin-ui" :> "statistics.js" :> Get '[JavaScript] LBS.ByteString
     :<|> "admin-ui" :> "receipt-math.js" :> Get '[JavaScript] LBS.ByteString
     :<|> "admin-ui" :> "receipt-media.js" :> Get '[JavaScript] LBS.ByteString
-    :<|> "admin-ui" :> "receipt-heif.js" :> Get '[JavaScript] LBS.ByteString
-    :<|> "admin-ui" :> "receipt-heif-worker.js" :> Get '[JavaScript] LBS.ByteString
-    :<|> "admin-ui" :> "vendor" :> "libheif" :> "libheif-bundle.js" :> Get '[JavaScript] LBS.ByteString
-    :<|> "admin-ui" :> "vendor" :> "libheif" :> "LICENSES.txt" :> Get '[NoticeText] LBS.ByteString
-    :<|> "admin-ui" :> "vendor" :> "libheif" :> "SOURCE.txt" :> Get '[NoticeText] LBS.ByteString
-    :<|> "admin-ui" :> "vendor" :> "libheif" :> "corresponding-source.tar.gz" :> Get '[Gzip] LBS.ByteString
     :<|> "admin-ui" :> "jizhang-mark.svg" :> Get '[SVG] LBS.ByteString
     :<|> "legal" :> "licenses" :> Get '[HTML] LBS.ByteString
 
@@ -97,12 +75,6 @@ adminUIServer =
     :<|> serveUIFile "statistics.js"
     :<|> serveUIFile "receipt-math.js"
     :<|> serveUIFile "receipt-media.js"
-    :<|> serveWebFile "receipt-heif.js"
-    :<|> serveWebFile "receipt-heif-worker.js"
-    :<|> serveWebFile "vendor/libheif/libheif-bundle.js"
-    :<|> serveWebFile "vendor/libheif/LICENSES.txt"
-    :<|> serveWebFile "vendor/libheif/SOURCE.txt"
-    :<|> serveWebFile "vendor/libheif/corresponding-source.tar.gz"
     :<|> serveMark
     :<|> serveUIFile "licenses.html"
 
@@ -126,7 +98,3 @@ serveMark = do
   path <- liftIO $ getDataFileName "client/web/jizhang-mark.svg"
   liftIO $ LBS.readFile path
 
-serveWebFile :: FilePath -> MyHandler LBS.ByteString
-serveWebFile name = do
-  path <- liftIO $ getDataFileName ("client/web" </> name)
-  liftIO $ LBS.readFile path

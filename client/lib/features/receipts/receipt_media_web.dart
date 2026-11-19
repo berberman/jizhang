@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
-import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -16,24 +15,6 @@ const _photoTypes = XTypeGroup(
   mimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif',
     'image/heic-sequence', 'image/heif-sequence'],
 );
-
-@JS('JizhangReceiptHeif')
-external _ReceiptHeifDecoder? get _receiptHeif;
-
-extension type _ReceiptHeifDecoder._(JSObject _) implements JSObject {
-  external JSPromise<web.HTMLCanvasElement> decode(JSUint8Array bytes, _ReceiptHeifOptions options);
-}
-
-extension type _ReceiptHeifOptions._(JSObject _) implements JSObject {
-  external factory _ReceiptHeifOptions({required web.AbortSignal signal});
-}
-
-ReceiptMediaException _heifFailure(String? code) => ReceiptMediaException(switch (code) {
-  'dimensions' => 'This HEIC/HEIF photo is too large to prepare. Choose a smaller photo.',
-  'timeout' => 'Preparing this HEIC/HEIF photo took too long. Choose a smaller photo.',
-  'load' => 'HEIC/HEIF support could not be loaded. Reload and try again.',
-  _ => 'This HEIC/HEIF photo could not be read. Choose another photo.',
-});
 
 ReceiptMedia createReceiptMedia() => WebReceiptMedia();
 
@@ -108,19 +89,23 @@ class WebReceiptMedia with WidgetsBindingObserver implements ReceiptMedia {
       if (!_current(resources)) return null;
       validateReceiptOriginal(name: file.name, mediaType: file.mimeType,
         byteCount: bytes.length, prefix: bytes);
-      if (receiptOriginalMediaType(bytes) == 'image/heif') {
-        final canvas = await _decodeHeif(bytes, resources);
-        if (canvas == null || !_current(resources)) return null;
-        return _normalize(canvas, canvas.width, canvas.height, maxBytes);
-      }
-      final blob = web.Blob([bytes.toJS].toJS);
+      final type = receiptOriginalMediaType(bytes)!;
+      final blob = web.Blob([bytes.toJS].toJS, web.BlobPropertyBag(type: type));
       final url = web.URL.createObjectURL(blob);
       resources.own(() => web.URL.revokeObjectURL(url));
       final image = web.HTMLImageElement();
       resources.own(() { image.removeAttribute('src'); image.remove(); });
       // HTML image decoding applies the browser's EXIF orientation before drawing.
       image.src = url;
-      await image.decode().toDart;
+      try {
+        await image.decode().toDart;
+      } catch (_) {
+        if (!_current(resources)) return null;
+        if (type == 'image/heif') {
+          throw const ReceiptMediaException('This browser could not read this HEIC/HEIF photo. Choose a JPEG, PNG, or WebP image, or take a photo instead.');
+        }
+        rethrow;
+      }
       if (!_current(resources)) return null;
       return _normalize(image, image.naturalWidth, image.naturalHeight, maxBytes);
     } on ReceiptMediaException {
@@ -128,45 +113,10 @@ class WebReceiptMedia with WidgetsBindingObserver implements ReceiptMedia {
       rethrow;
     } catch (_) {
       if (!_current(resources)) return null;
-      throw const ReceiptMediaException('This browser could not read the photo. Try a JPEG or PNG image instead.');
+      throw const ReceiptMediaException('This browser could not read that photo. Choose a JPEG, PNG, or WebP image, or take a photo instead.');
     } finally {
       _finish(resources);
     }
-  }
-
-  Future<web.HTMLCanvasElement?> _decodeHeif(Uint8List bytes, ReceiptMediaResources resources) {
-    final result = Completer<web.HTMLCanvasElement?>();
-    try {
-      final decoder = _receiptHeif;
-      if (decoder.isUndefinedOrNull) throw _heifFailure('load');
-      final controller = web.AbortController();
-      resources.own(() => controller.abort());
-      final promise = decoder!.decode(bytes.toJS, _ReceiptHeifOptions(signal: controller.signal));
-      promise.callMethod<JSAny?>('then'.toJS,
-        ((web.HTMLCanvasElement canvas) {
-          resources.own(() {
-            canvas.width = 0;
-            canvas.height = 0;
-            canvas.remove();
-          });
-          result.complete(_current(resources) ? canvas : null);
-        }).toJS,
-        ((JSAny? failure) {
-          if (!_current(resources)) {
-            result.complete(null);
-            return;
-          }
-          final code = !failure.isUndefinedOrNull && failure.typeofEquals('object')
-              ? (failure as JSObject).getProperty<JSString?>('code'.toJS)?.toDart
-              : null;
-          result.completeError(_heifFailure(code));
-        }).toJS);
-    } on ReceiptMediaException {
-      rethrow;
-    } catch (_) {
-      throw _heifFailure('load');
-    }
-    return result.future;
   }
 
   @override
